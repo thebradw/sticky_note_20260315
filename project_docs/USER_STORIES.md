@@ -1,0 +1,14 @@
+﻿# User Stories - Sticky Note Workflow Processor
+_Last updated: 2026-02-14_
+
+| Story ID | Persona | Story | Acceptance Criteria | Status |
+| --- | --- | --- | --- | --- |
+| US-01 | Workshop Facilitator | As a facilitator, I choose the workflow layout before uploading photos so heuristics match my board. | `templates/index.html` renders layout radio buttons; `/upload` normalizes via `normalize_flow_direction` and persists the value in `sessions[session_id]['flow_direction']`; analyzer pulls the same flag before sorting notes. | Done |
+| US-02 | Workshop Facilitator | As a facilitator, I can upload one overview photo plus detail photos and know if the overview alone is readable. | `/upload` records the first photo as `overview` and sets `multi_photo`; `/detect-readability/<session>` reuses `analyze_overview` to report readability >=0.8 so I can skip detail processing. | Done |
+| US-03 | Process Engineer | As an analyst, I need each sticky note captured with coordinates, colors, shapes, and outgoing arrows so downstream layouts are accurate. | `StickyNoteAnalyzer.analyze_workflow` prompt enforces bounding boxes and arrow extraction; overview/detail prompts normalize positions via `NoteMatcherSystem.normalize_position`; outputs are JSON structures stored under `analysis_results`. | Done |
+| US-04 | Workshop Facilitator | As the facilitator, I need parallel work, decision diamonds, and swim lanes respected in the exported workflow. | Layout strategies (`layout_strategies/*.py`) encapsulate heuristics for each radio selection; `ProcessMapFlowable` draws branches and parallel blocks based on `workflow_sequence` and `decision_branches`. | Done |
+| US-05 | Workshop Facilitator | As a reviewer, I can edit, reorder, and delete detected notes before sharing the output. | `templates/review.html` exposes client-side controls; `/save-edits/<session>` applies `editedNotes`, `deletedNotes`, and `workflowSequence` payloads to the session data. | Done |
+| US-06 | Workshop Facilitator | As a facilitator, I need to know when detail photos disagree with the overview so I can fix conflicts before export. | `NoteMatcherSystem.match_detail_to_overview` stores `conflicts`; `/detect-conflicts/<session>` aggregates them so the Review UI can surface mismatches. | Done |
+| US-07 | Executive Stakeholder | As an executive, I want a professional PDF that mirrors the wall, including colors, shapes, and branch arrows. | `/generate-pdf/<session>` wraps `ProcessMapFlowable` to render note shapes, apply color palettes, and route arrows/branch labels; files land in `outputs/` for download. | Done |
+| US-08 | Quality Lead | As QA, I can rerun deterministic regression tests when heuristics change. | `project_docs/test_cases.md` defines canonical flows; `test_suite.py`, `test_all_layouts.py`, and `mock_analyzer.py` exercise analyzer logic without real API calls. | Done |
+

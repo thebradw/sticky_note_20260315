@@ -1,0 +1,38 @@
+# Environment / secrets — NEVER commit
+.env
+.env.*
+project_docs/Anthropic api key.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+*.egg-info/
+
+# Flask runtime artifacts
+uploads/
+instance/
+
+# Generated outputs
+outputs/
+
+# Logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Claude Code — keep commands/ (project slash commands), exclude local settings
+.claude/settings*
+.claude/*.json

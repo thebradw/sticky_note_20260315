@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review & Edit Workflow Results</title>
+    <style>
+        body {
+            background: #667eea;
+            color: white;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            color: black;
+            padding: 30px;
+            border-radius: 15px;
+        }
+
+        .summary-box {
+            background: #e8f5e8;
+            color: #333;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .sequence-container {
+            background: #fff3cd;
+            color: #333;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 2px solid #ffc107;
+        }
+
+        .sequence-editor {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            min-height: 80px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 2px dashed #dee2e6;
+            margin: 15px 0;
+        }
+
+        .sequence-item {
+            background: #007bff;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            cursor: move;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+
+        .sequence-item:hover {
+            background: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .sequence-item.dragging {
+            opacity: 0.5;
+            transform: rotate(5deg);
+        }
+
+        .sequence-item .note-preview {
+            font-size: 0.8em;
+            opacity: 0.9;
+            max-width: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sequence-tools {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+
+        .sequence-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .sequence-btn:hover {
+            background: #5a6268;
+        }
+
+        .sequence-btn.primary {
+            background: #007bff;
+        }
+
+        .sequence-btn.primary:hover {
+            background: #0056b3;
+        }
+
+        .notes-container {
+            background: #f8f9fa;
+            color: #333;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .note-card {
+            background: white;
+            color: black;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border-left: 5px solid #28a745;
+            position: relative;
+        }
+
+        .note-green {
+            border-left-color: #28a745;
+        }
+
+        .note-pink {
+            border-left-color: #e83e8c;
+        }
+
+        .note-yellow {
+            border-left-color: #ffc107;
+        }
+
+        .note-blue {
+            border-left-color: #007bff;
+        }
+
+        .note-orange {
+            border-left-color: #fd7e14;
+        }
+
+        .note-purple {
+            border-left-color: #6f42c1;
+        }
+
+        .note-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .note-content {
+            flex: 1;
+        }
+
+        .note-text {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .note-text input {
+            width: 100%;
+            font-size: 1.1em;
+            font-weight: bold;
+            border: 1px solid #ddd;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .note-details {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .note-field {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .note-field select {
+            padding: 3px 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .low-confidence-badge {
+            display: inline-block;
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffc107;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            padding: 2px 7px;
+            margin-left: 8px;
+            vertical-align: middle;
+            cursor: help;
+        }
+
+        .note-card.low-confidence {
+            border-left-color: #ffc107;
+            background: #fffdf0;
+        }
+
+        .note-field:has(select[data-field="parallel_with"]) {
+            background: #fff3cd;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #ffc107;
+        }
+
+        /* NEW: Parallel badge styling */
+        .parallel-badge {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            display: inline-block;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .parallel-badge-icon {
+            display: inline-block;
+            background: #ffc107;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-right: 5px;
+            font-size: 0.8em;
+        }
+
+        /* NEW: Decision badge styling */
+        .decision-badge {
+            background: #d1ecf1;
+            border: 1px solid #0dcaf0;
+            color: #0c5460;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            display: inline-block;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .decision-badge-icon {
+            display: inline-block;
+            background: #0dcaf0;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-right: 5px;
+            font-size: 0.8em;
+        }
+
+        .decision-details {
+            margin-left: 10px;
+            font-size: 0.85em;
+            line-height: 1.6;
+        }
+
+        .delete-btn {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+
+        .undelete-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .undelete-btn:hover {
+            background-color: #218838;
+        }
+
+        .edit-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .edit-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .save-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .save-btn:hover {
+            background-color: #218838;
+        }
+
+        .cancel-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .cancel-btn:hover {
+            background-color: #5a6268;
+        }
+
+        .display-mode,
+        .edit-mode {
+            margin: 5px 0;
+        }
+
+        .edit-mode {
+            display: none;
+        }
+
+        .edit-mode input,
+        .edit-mode select {
+            margin: 5px 0;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .edit-mode input[type="text"] {
+            width: 100%;
+        }
+
+        .marked-for-deletion {
+            opacity: 0.5;
+            text-decoration: line-through;
+            background: #f8d7da !important;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            margin: 5px;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .action-section {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+        }
+
+        .result-box {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .result-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .result-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .changes-indicator {
+            background: #fff3cd;
+            color: #856404;
+            padding: 10px 15px;
+            border-radius: 6px;
+            border: 1px solid #ffc107;
+            text-align: center;
+            display: none;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>📝 Review & Edit Workflow</h1>
+
+        {% if results %}
+        {% for result in results %}
+        {% if result.status == 'success' and result.analysis %}
+        {% set analysis = result.analysis %}
+
+        <!-- Summary Box -->
+        <div class="summary-box">
+            <h3>📊 Summary</h3>
+            <p><strong>Total Sticky Notes:</strong> {{ analysis.sticky_notes|length }}</p>
+            <p><strong>Workflow Description:</strong> {{ analysis.summary or 'No summary provided' }}</p>
+        </div>
+
+        <!-- Sequence Editor -->
+        <div class="sequence-container">
+            <h3>🔢 Workflow Sequence (Drag to Reorder)</h3>
+            <p style="font-size: 0.9em; color: #666;">Drag and drop the sequence items below to change the order of
+                steps in your workflow</p>
+
+            <div class="sequence-tools">
+                <button class="sequence-btn primary" onclick="renderSequenceEditor()">🔄 Reset Sequence</button>
+                <button class="sequence-btn" onclick="reverseSequence()">⬅️➡️ Reverse Order</button>
+            </div>
+
+            <div id="sequenceEditor" class="sequence-editor"></div>
+
+            <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                <strong>Current Sequence IDs:</strong> <span id="sequenceDisplay"></span>
+            </div>
+        </div>
+
+        <!-- Changes Indicator -->
+        <div id="changesIndicator" class="changes-indicator">
+            ⚠️ You have unsaved changes
+        </div>
+
+        <!-- All Notes Section -->
+        <div class="notes-container">
+            <h3>📌 All Sticky Notes (Click ✏️ to edit)</h3>
+
+            {% for note in analysis.sticky_notes %}
+            <div class="note-card note-{{ note.color }}{% if note.low_confidence %} low-confidence{% endif %}" data-note-id="{{ note.id }}">
+                <!-- Display Mode -->
+                <div class="display-mode">
+                    <div class="note-header">
+                        <div class="note-content">
+                            <div class="note-text">
+                                {{ note.text }}
+                                {% if note.low_confidence %}
+                                <span class="low-confidence-badge" title="Short text with no matching vocabulary elsewhere on the wall — may be a misread. Please verify or correct.">⚠️ Verify</span>
+                                {% endif %}
+                                <button class="edit-btn" onclick="editNoteByCard(this)">✏️ Edit</button>
+                            </div>
+                            <div class="note-details">
+                                <span>📍 {{ note.position or 'unknown position' }}</span>
+                                <span>🎨 {{ note.color }}</span>
+                                <span>📐 {{ note.shape }}</span>
+                                <div class="note-field">
+                                    <span>⚡ Parallel:</span>
+                                    <select data-field="parallel_with" data-note-id="{{ note.id }}" disabled
+                                        onchange="handleParallelChange(this)">
+                                        <option value="">None</option>
+                                        {% for other_note in analysis.sticky_notes %}
+                                        {% if other_note.id != note.id %}
+                                        <option value="{{ other_note.id }}" {% if note.parallel_with==other_note.id
+                                            %}selected{% endif %}>
+                                            {{ other_note.text[:30] }}
+                                        </option>
+                                        {% endif %}
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- NEW: Parallel Badge Display -->
+                            {% if note.parallel_with %}
+                            {% set partner = analysis.sticky_notes|selectattr('id', 'equalto',
+                            note.parallel_with)|first %}
+                            <div class="parallel-badge">
+                                <span class="parallel-badge-icon">⚡ PARALLEL</span>
+                                Runs in parallel with: <strong>{{ partner.text if partner else 'Note #' +
+                                    note.parallel_with|string }}</strong>
+                            </div>
+                            {% endif %}
+
+                            <!-- NEW: Decision Badge Display -->
+                            {% if note.decision_branches %}
+                            {% set branches = note.decision_branches %}
+                            <div class="decision-badge">
+                                <span class="decision-badge-icon">💎 DECISION</span>
+                                <div class="decision-details">
+                                    {% if branches.yes_next_step %}
+                                    {% set yes_note = analysis.sticky_notes|selectattr('id', 'equalto',
+                                    branches.yes_next_step)|first %}
+                                    ✅ {{ branches.yes_label or 'Yes' }} → <strong>{{ yes_note.text if yes_note else
+                                        'Note #' + branches.yes_next_step|string }}</strong><br>
+                                    {% endif %}
+                                    {% if branches.no_next_step %}
+                                    {% set no_note = analysis.sticky_notes|selectattr('id', 'equalto',
+                                    branches.no_next_step)|first %}
+                                    ❌ {{ branches.no_label or 'No' }} → <strong>{{ no_note.text if no_note else 'Note
+                                        #' + branches.no_next_step|string }}</strong><br>
+                                    {% endif %}
+                                    {% if branches.rejoin_step %}
+                                    {% set rejoin_note = analysis.sticky_notes|selectattr('id', 'equalto',
+                                    branches.rejoin_step)|first %}
+                                    🔄 Rejoin at → <strong>{{ rejoin_note.text if rejoin_note else 'Note #' +
+                                        branches.rejoin_step|string }}</strong>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <button class="delete-btn" onclick="toggleDeleteNoteByCard(this)">🗑️ Delete</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Edit Mode -->
+                <div class="edit-mode">
+                    <div>
+                        <label><strong>Text:</strong></label><br>
+                        <input type="text" data-field="text" value="{{ note.text }}" style="width: 100%;">
+                    </div>
+                    <div style="display: flex; gap: 10px; margin: 10px 0;">
+                        <div>
+                            <label>Position:</label>
+                            <input type="text" data-field="position" value="{{ note.position or 'unknown' }}">
+                        </div>
+                        <div>
+                            <label>Color:</label>
+                            <select data-field="color">
+                                {% for color in ['yellow', 'pink', 'blue', 'green', 'orange', 'purple', 'white'] %}
+                                <option value="{{ color }}" {% if note.color==color %}selected{% endif %}>{{ color }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Shape:</label>
+                            <select data-field="shape">
+                                {% for shape in ['square', 'rectangular', 'diamond', 'oval', 'circle'] %}
+                                <option value="{{ shape }}" {% if note.shape==shape %}selected{% endif %}>{{ shape }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Parallel With:</label>
+                            <select data-field="parallel_with">
+                                <option value="">None</option>
+                                {% for other_note in analysis.sticky_notes %}
+                                {% if other_note.id != note.id %}
+                                <option value="{{ other_note.id }}" {% if note.parallel_with==other_note.id %}selected{%
+                                    endif %}>
+                                    {{ other_note.text[:30] }}
+                                </option>
+                                {% endif %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Decision Branches (for diamond shapes) -->
+                    {% if note.shape == 'diamond' or (note.decision_branches) %}
+                    <div style="background: #e7f3ff; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                        <strong>💎 Decision Branches:</strong>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                            <div>
+                                <label>Yes Label:</label>
+                                <input type="text" data-field="yes_label"
+                                    value="{{ note.decision_branches.yes_label if note.decision_branches else 'Yes' }}">
+                            </div>
+                            <div>
+                                <label>Yes Next Step:</label>
+                                <select data-field="yes_next_step">
+                                    <option value="">None</option>
+                                    {% for other_note in analysis.sticky_notes %}
+                                    {% if other_note.id != note.id %}
+                                    <option value="{{ other_note.id }}" {% if note.decision_branches and
+                                        note.decision_branches.yes_next_step==other_note.id %}selected{% endif %}>
+                                        {{ other_note.text[:30] }}
+                                    </option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label>No Label:</label>
+                                <input type="text" data-field="no_label"
+                                    value="{{ note.decision_branches.no_label if note.decision_branches else 'No' }}">
+                            </div>
+                            <div>
+                                <label>No Next Step:</label>
+                                <select data-field="no_next_step">
+                                    <option value="">None</option>
+                                    {% for other_note in analysis.sticky_notes %}
+                                    {% if other_note.id != note.id %}
+                                    <option value="{{ other_note.id }}" {% if note.decision_branches and
+                                        note.decision_branches.no_next_step==other_note.id %}selected{% endif %}>
+                                        {{ other_note.text[:30] }}
+                                    </option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div style="grid-column: 1 / -1;">
+                                <label>Rejoin Step:</label>
+                                <select data-field="rejoin_step">
+                                    <option value="">None</option>
+                                    {% for other_note in analysis.sticky_notes %}
+                                    {% if other_note.id != note.id %}
+                                    <option value="{{ other_note.id }}" {% if note.decision_branches and
+                                        note.decision_branches.rejoin_step==other_note.id %}selected{% endif %}>
+                                        {{ other_note.text[:30] }}
+                                    </option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div style="margin-top: 10px;">
+                        <button class="save-btn" onclick="saveNoteByCard(this)">💾 Save</button>
+                        <button class="cancel-btn" onclick="cancelEditByCard(this)">❌ Cancel</button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-section">
+            <h3>🎯 Actions</h3>
+            <button id="saveAllBtn" class="btn btn-success" onclick="saveAllChanges()" style="display: none;">💾 Save
+                All Changes</button>
+            <button id="pdfBtn" class="btn btn-primary" onclick="generatePDF()">📄 Generate PDF</button>
+            <button class="btn btn-secondary" onclick="window.location.href='/'">↩️ Start Over</button>
+
+            <div id="pdfResult" class="result-box">
+                <p id="pdfMessage"></p>
+            </div>
+        </div>
+
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+    </div>
+
+    <script>
+        const sessionId = '{{ session_id }}';
+        let notesData = {};
+        let currentSequence = [];
+        let editedNotes = {};
+        let deletedNotes = new Set();
+        let hasChanges = false;
+
+        {% if results %}
+        {% for result in results %}
+        {% if result.status == 'success' and result.analysis %}
+        {% set analysis = result.analysis %}
+        {% for note in analysis.sticky_notes %}
+        notesData[{{ note.id }}] = {
+            id: {{ note.id }},
+            text: {{ note.text | tojson }},
+            position: "{{ note.position or 'unknown' }}",
+            color: "{{ note.color }}",
+            shape: "{{ note.shape }}",
+            parallel_with: {{ note.parallel_with if note.parallel_with else 'null' }},
+            decision_branches: {{ note.decision_branches | tojson if note.decision_branches else 'null' }}
+        };
+        {% endfor %}
+        currentSequence = {{ analysis.workflow_sequence | tojson }};
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        function renderSequenceEditor() {
+            const editor = document.getElementById('sequenceEditor');
+            const display = document.getElementById('sequenceDisplay');
+
+            editor.innerHTML = '';
+
+            currentSequence.forEach((noteId, index) => {
+                const note = notesData[noteId];
+                if (!note) return;
+
+                const item = document.createElement('div');
+                item.className = 'sequence-item';
+                item.draggable = true;
+                item.dataset.noteId = noteId;
+                item.dataset.index = index;
+
+                item.innerHTML = `
+                    <span style="font-weight: bold;">${index + 1}</span>
+                    <span class="note-preview">${note.text}</span>
+                `;
+
+                item.addEventListener('dragstart', handleDragStart);
+                item.addEventListener('dragover', handleDragOver);
+                item.addEventListener('drop', handleDrop);
+                item.addEventListener('dragend', handleDragEnd);
+
+                editor.appendChild(item);
+            });
+
+            display.textContent = currentSequence.join(', ');
+        }
+
+        let draggedElement = null;
+
+        function handleDragStart(e) {
+            draggedElement = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            return false;
+        }
+
+        function handleDrop(e) {
+            e.stopPropagation();
+
+            if (draggedElement !== this) {
+                const draggedId = parseInt(draggedElement.dataset.noteId);
+                const targetId = parseInt(this.dataset.noteId);
+
+                const draggedIndex = currentSequence.indexOf(draggedId);
+                const targetIndex = currentSequence.indexOf(targetId);
+
+                currentSequence.splice(draggedIndex, 1);
+                currentSequence.splice(targetIndex, 0, draggedId);
+
+                hasChanges = true;
+                document.getElementById('changesIndicator').style.display = 'block';
+                document.getElementById('saveAllBtn').style.display = 'inline-block';
+
+                renderSequenceEditor();
+            }
+
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            this.classList.remove('dragging');
+        }
+
+        function setupDragAndDrop() {
+            // Re-attach event listeners after rendering
+            renderSequenceEditor();
+        }
+
+        function reverseSequence() {
+            currentSequence.reverse();
+            hasChanges = true;
+            document.getElementById('changesIndicator').style.display = 'block';
+            document.getElementById('saveAllBtn').style.display = 'inline-block';
+            renderSequenceEditor();
+        }
+
+        function populateAllParallelDropdowns() {
+            document.querySelectorAll('[data-field="parallel_with"]').forEach(select => {
+                const noteId = select.dataset.noteId;
+                select.innerHTML = '<option value="">None</option>';
+
+                Object.values(notesData).forEach(note => {
+                    if (note.id != noteId && !deletedNotes.has(note.id)) {
+                        const option = document.createElement('option');
+                        option.value = note.id;
+                        option.textContent = note.text.substring(0, 30);
+                        if (notesData[noteId] && notesData[noteId].parallel_with == note.id) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
+                    }
+                });
+            });
+        }
+
+        function populateParallelDropdownForCard(noteCard) {
+            const noteId = noteCard.getAttribute('data-note-id');
+            const selects = noteCard.querySelectorAll('[data-field="parallel_with"]');
+
+            selects.forEach(select => {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">None</option>';
+
+                Object.values(notesData).forEach(note => {
+                    if (note.id != noteId && !deletedNotes.has(note.id)) {
+                        const option = document.createElement('option');
+                        option.value = note.id;
+                        option.textContent = note.text.substring(0, 30);
+                        if (currentValue == note.id) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
+                    }
+                });
+            });
+        }
+
+        function editNoteByCard(button) {
+            const noteCard = button.closest('.note-card');
+            const displayMode = noteCard.querySelector('.display-mode');
+            const editMode = noteCard.querySelector('.edit-mode');
+
+            displayMode.style.display = 'none';
+            editMode.style.display = 'block';
+
+            populateParallelDropdownForCard(noteCard);
+        }
+
+        function handleParallelChange(selectElement) {
+            const noteId = parseInt(selectElement.dataset.noteId);
+            const parallelWith = selectElement.value ? parseInt(selectElement.value) : null;
+
+            const allParallelSelects = document.querySelectorAll(`[data-note-id="${noteId}"][data-field="parallel_with"]`);
+
+            allParallelSelects.forEach(select => {
+                if (select !== selectElement) {
+                    select.value = parallelWith;
+                }
+            });
+
+            hasChanges = true;
+            document.getElementById('changesIndicator').style.display = 'block';
+            document.getElementById('saveAllBtn').style.display = 'inline-block';
+
+            if (!editedNotes[noteId]) {
+                editedNotes[noteId] = {};
+            }
+            editedNotes[noteId].parallel_with = parallelWith ? parseInt(parallelWith) : null;
+        }
+
+        function toggleDeleteNoteByCard(button) {
+            const noteCard = button.closest('.note-card');
+            const noteId = parseInt(noteCard.getAttribute('data-note-id'));
+
+            if (deletedNotes.has(noteId)) {
+                deletedNotes.delete(noteId);
+                noteCard.classList.remove('marked-for-deletion');
+                button.textContent = '🗑️ Delete';
+                button.className = 'delete-btn';
+            } else {
+                deletedNotes.add(noteId);
+                noteCard.classList.add('marked-for-deletion');
+                button.textContent = '↩️ Undelete';
+                button.className = 'undelete-btn';
+            }
+
+            hasChanges = true;
+            document.getElementById('changesIndicator').style.display = 'block';
+            document.getElementById('saveAllBtn').style.display = 'inline-block';
+        }
+
+        function cancelEditByCard(button) {
+            const noteCard = button.closest('.note-card');
+            const displayMode = noteCard.querySelector('.display-mode');
+            const editMode = noteCard.querySelector('.edit-mode');
+
+            const displayParallelSelect = displayMode.querySelector('[data-field="parallel_with"]');
+            if (displayParallelSelect) {
+                displayParallelSelect.disabled = true;
+            }
+
+            displayMode.style.display = 'block';
+            editMode.style.display = 'none';
+        }
+
+        function saveNoteByCard(button) {
+            const noteCard = button.closest('.note-card');
+            const noteId = noteCard.getAttribute('data-note-id');
+            const editMode = noteCard.querySelector('.edit-mode');
+            const displayMode = noteCard.querySelector('.display-mode');
+
+            const text = editMode.querySelector('[data-field="text"]').value;
+            const position = editMode.querySelector('[data-field="position"]').value;
+            const color = editMode.querySelector('[data-field="color"]').value;
+            const shape = editMode.querySelector('[data-field="shape"]').value;
+            const parallelWith = editMode.querySelector('[data-field="parallel_with"]').value;
+
+            let decisionBranches = null;
+            if (shape === 'diamond') {
+                const yesLabelInput = editMode.querySelector('[data-field="yes_label"]');
+                const noLabelInput = editMode.querySelector('[data-field="no_label"]');
+                const yesNextInput = editMode.querySelector('[data-field="yes_next_step"]');
+                const noNextInput = editMode.querySelector('[data-field="no_next_step"]');
+                const rejoinInput = editMode.querySelector('[data-field="rejoin_step"]');
+
+                const yesLabel = yesLabelInput && yesLabelInput.value ? yesLabelInput.value : 'Yes';
+                const noLabel = noLabelInput && noLabelInput.value ? noLabelInput.value : 'No';
+                const yesNextStep = yesNextInput ? yesNextInput.value : '';
+                const noNextStep = noNextInput ? noNextInput.value : '';
+                const rejoinStep = rejoinInput ? rejoinInput.value : '';
+
+                decisionBranches = {
+                    yes_label: yesLabel,
+                    no_label: noLabel,
+                    yes_next_step: yesNextStep ? parseInt(yesNextStep) : null,
+                    no_next_step: noNextStep ? parseInt(noNextStep) : null,
+                    rejoin_step: rejoinStep ? parseInt(rejoinStep) : null
+                };
+            }
+
+            editedNotes[noteId] = {
+                text: text,
+                position: position,
+                color: color,
+                shape: shape,
+                parallel_with: parallelWith ? parseInt(parallelWith) : null,
+                decision_branches: decisionBranches
+            };
+
+            if (notesData[noteId]) {
+                notesData[noteId].text = text;
+                notesData[noteId].position = position;
+                notesData[noteId].color = color;
+                notesData[noteId].shape = shape;
+                notesData[noteId].parallel_with = parallelWith ? parseInt(parallelWith) : null;
+                notesData[noteId].decision_branches = decisionBranches;
+            }
+
+            hasChanges = true;
+
+            const displayText = displayMode.querySelector('.note-text');
+            displayText.innerHTML = text + ' <button class="edit-btn" onclick="editNoteByCard(this)">✏️ Edit</button>';
+
+            const details = displayMode.querySelector('.note-details');
+            const spans = details.querySelectorAll('span');
+            if (spans[0]) spans[0].textContent = '📍 ' + position;
+            if (spans[1]) spans[1].textContent = '🎨 ' + color;
+            if (spans[2]) spans[2].textContent = '📐 ' + shape;
+
+            noteCard.className = 'note-card note-' + color;
+
+            populateParallelDropdownForCard(noteCard);
+
+            const displayParallelSelect = displayMode.querySelector('[data-field="parallel_with"]');
+            if (displayParallelSelect) {
+                displayParallelSelect.disabled = true;
+            }
+
+            displayMode.style.display = 'block';
+            editMode.style.display = 'none';
+
+            renderSequenceEditor();
+            setupDragAndDrop();
+
+            document.getElementById('changesIndicator').style.display = 'block';
+            document.getElementById('saveAllBtn').style.display = 'inline-block';
+        }
+
+        async function saveAllChanges() {
+            const saveBtn = document.getElementById('saveAllBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Saving...';
+
+            try {
+                const response = await fetch('/save-edits/' + sessionId, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        editedNotes: editedNotes,
+                        deletedNotes: Array.from(deletedNotes),
+                        workflowSequence: currentSequence
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    deletedNotes.forEach(noteId => {
+                        const noteCard = document.querySelector(`[data-note-id="${noteId}"]`);
+                        if (noteCard) {
+                            noteCard.remove();
+                        }
+                        delete notesData[noteId];
+                        delete editedNotes[noteId];
+
+                        const index = currentSequence.indexOf(noteId);
+                        if (index > -1) {
+                            currentSequence.splice(index, 1);
+                        }
+                    });
+
+                    deletedNotes.clear();
+                    populateAllParallelDropdowns();
+                    renderSequenceEditor();
+                    setupDragAndDrop();
+
+                    document.getElementById('changesIndicator').style.display = 'none';
+                    saveBtn.style.display = 'none';
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 Save All Changes';
+                    hasChanges = false;
+
+                    const indicator = document.getElementById('changesIndicator');
+                    indicator.textContent = '✅ Changes saved successfully!';
+                    indicator.style.background = '#d4edda';
+                    indicator.style.color = '#155724';
+                    indicator.style.display = 'block';
+
+                    setTimeout(function () {
+                        indicator.style.display = 'none';
+                    }, 3000);
+                } else {
+                    throw new Error(data.error || 'Save failed');
+                }
+
+            } catch (error) {
+                alert('Error saving changes: ' + error.message);
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save All Changes';
+            }
+        }
+
+        async function generatePDF() {
+            if (hasChanges) {
+                if (!confirm('You have unsaved changes. Save them before generating PDF?')) {
+                    return;
+                }
+                await saveAllChanges();
+            }
+
+            const btn = document.getElementById('pdfBtn');
+            const result = document.getElementById('pdfResult');
+            const message = document.getElementById('pdfMessage');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating PDF...';
+
+            try {
+                const response = await fetch('/generate-pdf/' + sessionId);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    message.textContent = '✅ PDF generated successfully! Check your outputs folder.';
+                    result.className = 'result-box result-success';
+                    btn.textContent = '✅ PDF Generated';
+                } else {
+                    message.textContent = '❌ PDF generation failed: ' + (data.error || 'Unknown error');
+                    result.className = 'result-box result-error';
+                    btn.disabled = false;
+                    btn.textContent = '🔄 Retry PDF';
+                }
+
+                result.style.display = 'block';
+
+            } catch (error) {
+                message.textContent = '❌ Error: ' + error.message;
+                result.className = 'result-box result-error';
+                result.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = '🔄 Retry PDF';
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function () {
+            renderSequenceEditor();
+            setupDragAndDrop();
+        });
+    </script>
+</body>
+
+</html>

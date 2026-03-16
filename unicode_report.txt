@@ -1,0 +1,62 @@
+line   60: U+2014      #  Pass-2 OCR — crop each note and re-read its text              #
+line   78: U+2192                  # Scale factor: Vision's coordinate space → actual pixels
+line  115: U+2014                  # Build grid montage — 5 crops per row
+line  144: U+2026  from a wall photo.  Each crop is labelled with a number (e.g. #1, #2 …).
+line  155: U+2026                  print(f"  [OCR Pass 2] Sending {len(crops)} crops for text refinement …")
+line  175: U+2014                      print("  [OCR Pass 2] WARNING — could not parse JSON from response")
+line  190: U+2014              print(f"  [OCR Pass 2] WARNING — refinement failed: {e}")
+line  276: U+2014                  temperature=0,   # deterministic — suppress text hallucination
+line  395: U+2014                  temperature=0,   # deterministic — suppress text hallucination
+line  442: U+00C3          Orchestrate multi-photo workflow: overview Ã¢â€ â€™ detail analyses Ã¢â€ â€™ matching Ã¢â€ â
+line  593: U+2014  the handwriting — including misspellings, abbreviations, and acronyms.
+line  609: U+2014       terracotta, green) will cast a tint on every note — compensate for this by comparing
+line  623: U+2014     - CRITICAL OVERLAP RULE: When a non-standard shape (star, cloud, burst, etc.) is physically overl
+line  715: U+2014  LAYOUT CONTEXT — HORIZONTAL SWIM LANES:
+line  721: U+2014  WORKFLOW TITLE STICKIES — read this carefully:
+line  731: U+2014  - Do NOT set is_workflow_title on speech-bubble, callout, or other non-standard shapes — those
+line  735: U+2265    the row. A gap ≥ 1.5× the typical inter-step gap strongly indicates a title.
+line  737: U+2014  PAIN POINTS — callout and speech-bubble shapes:
+line  742: U+2014    "square" or "oval" — report their shape as "speech-bubble", "callout", or "cloud" as
+line  749: U+2014  - Transcribe text EXACTLY as written — preserve acronyms, abbreviations, and unusual spellings.
+line  768: U+2014                  temperature=0,   # deterministic — suppress text hallucination
+line  799: U+2014                      f"max_tokens={max_tok} — some notes are missing from the "
+line  831: U+2014                          # the rest of the pool — likely Vision hallucinations.
+line  834: U+2014                          # which the layout strategy sets during sort — so we
+line  843: U+2014                          # T3.0: Rectangle Role Classifier — runs before grouping
+line  852: U+2014                          # Post-grouping Tier 2 scan — supplements the provisional
+line  867: U+2014                                      # small to evaluate — leave as-is.
+line  885: U+2014                                  # against them here — a pre-flagged pain point is
+line  953: U+2014                                  # (exclude non-standard shapes — pain points)
+line  974: U+2014                                      # header color — the explicit flag overrides the
+line  978: U+2192                                          continue  # same color as steps → not a header
+line 1159: U+2014          # Spatial proximity gate — must ALSO pass to be considered a duplicate.
+line 1169: U+2014              # Threshold is intentionally tight — Vision bbox jitter is ≤ 15 px,
+line 1184: U+2014              # text-only check — this preserves previous behaviour for
+line 1205: U+2014          Tier 1 — Banner: Large rectangle spanning the top of the wall.
+line 1207: U+2014          Tier 2 — Lane Header: First note in each group's flow direction that is
+line 1210: U+2014          Tier 3 — Process Step: Everything else (unchanged).
+line 1212: U+2014          Coordinate system: image coordinates — Y=0 at top, Y increases downward.
+line 1231: U+2014          # Tier 1 — Banner detection
+line 1233: U+2014          # lane — full of regular process steps.  A step with a slightly
+line 1234: U+00D7          # larger bbox falsely triggers the 1.5× size threshold and gets
+line 1291: U+2014                      # Skip other rectangles and diamonds — only plain stickies
+line 1319: U+00B1                  # Must be isolated: no other remaining note within ±50 px vertically
+line 1334: U+2014          # Tier 2 — Lane Header detection (swim-lane layouts only)
+line 1365: U+2192                      continue  # single note → Tier 3, no comparison possible
+line 1371: U+2192                      continue  # not rectangle-shaped → Tier 3
+line 1402: U+2014              # preventing clean lane splits — same guard the actual strategy uses.
+line 1425: U+2014                            f"shape='{candidate.get('shape','')}' not rectangle — skip")
+line 1431: U+2014                            f"pain point — skip")
+line 1477: U+2014                  print(f"  [T3.0] Row {grp_idx}: color contrast miss — "
+line 1485: U+2265                  # A gap ≥ 1.8× the median inter-step gap indicates the leftmost
+line 1501: U+2265                                f"ratio={ratio:.2f}x (need ≥1.80x)")
+line 1541: U+2014          or alter the text — the note still appears in the PDF, just flagged.
+line 1544: U+2014          - Pain points (non-standard shapes) — short text is expected
+line 1545: U+2014          - Notes already marked [illegible] — already flagged by Vision
+line 1549: U+2265          # Build a vocabulary of all words across all notes (lowercase, ≥3 chars)
+line 1562: U+2014              # Skip pain points — short text is intentional
+line 1655: U+00E2                      print(f"  Parallel detected: {note1.get('text', '?')[:20]} â†” {note2.get('text'
+line 1680: U+2014                  # Diamonds ARE valid — sequential decision points are common.
+line 1783: U+00E2                  print(f"    Yes â†’ {yes_candidate.get('text', 'None')[:20] if yes_candidate and yes
+line 1784: U+00E2                  print(f"    No  â†’ {no_candidate.get('text', 'None')[:20] if no_candidate and no_id
+line 1785: U+00E2                  print(f"    Rejoin â†’ {rejoin_candidate.get('text', 'None')[:20] if rejoin_candidat

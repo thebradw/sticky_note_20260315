@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Workflow</title>
+</head>
+<body style="background: #667eea; color: white; font-family: Arial; padding: 20px;">
+    <div style="max-width: 800px; margin: 0 auto; background: white; color: black; padding: 30px; border-radius: 15px;">
+        <h1>🤖 Processing Your Workflow</h1>
+        
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <h3>📸 Files to Process:</h3>
+            {% for file in files %}
+            <div style="padding: 10px; background: white; margin: 10px 0; border-radius: 5px;">
+                {{ file.original_name }}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div style="background: #e0e0e0; height: 20px; border-radius: 10px; margin: 20px 0;">
+            <div id="progress" style="background: #28a745; height: 100%; width: 0%; border-radius: 10px; transition: width 0.5s;"></div>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button onclick="runAnalysis()" id="analyzeBtn" style="background: #667eea; color: white; border: none; padding: 15px 30px; font-size: 16px; border-radius: 10px; cursor: pointer;">
+                🚀 Start Analysis
+            </button>
+        </div>
+
+        <div id="results" style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0; display: none;">
+            <h3>📋 Results</h3>
+            <div id="output"></div>
+        </div>
+    </div>
+
+    <script>
+        const sessionId = "{{ session_id }}";
+
+        async function runAnalysis() {
+            const btn = document.getElementById('analyzeBtn');
+            const progress = document.getElementById('progress');
+            const results = document.getElementById('results');
+            const output = document.getElementById('output');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Analyzing...';
+            progress.style.width = '30%';
+
+            try {
+                const response = await fetch('/process/' + sessionId);
+                progress.style.width = '70%';
+
+                const data = await response.json();
+                progress.style.width = '100%';
+
+                let resultHtml = '';
+                
+                if (data.results && data.results[0] && data.results[0].status === 'success') {
+                    const analysis = data.results[0].analysis;
+                    
+                    resultHtml += '<p><strong>✅ Analysis Complete!</strong></p>';
+                    resultHtml += '<p>Found ' + analysis.sticky_notes.length + ' sticky notes</p>';
+                    
+                    if (analysis.summary) {
+                        resultHtml += '<div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 15px 0;">';
+                        resultHtml += '<strong>Summary:</strong><br>' + analysis.summary;
+                        resultHtml += '</div>';
+                    }
+                    
+                    resultHtml += '<h4>Sample Notes:</h4>';
+                    for (let i = 0; i < Math.min(5, analysis.sticky_notes.length); i++) {
+                        const note = analysis.sticky_notes[i];
+                        resultHtml += '<div style="background: white; padding: 10px; margin: 10px 0; border-left: 4px solid #28a745; border-radius: 5px;">';
+                        resultHtml += '<strong>' + (note.text || 'Empty') + '</strong><br>';
+                        resultHtml += '<small>Color: ' + (note.color || 'unknown') + ' | Position: ' + (note.position || 'unknown') + '</small>';
+                        resultHtml += '</div>';
+                    }
+                    
+                    if (analysis.sticky_notes.length > 5) {
+                        resultHtml += '<p>... and ' + (analysis.sticky_notes.length - 5) + ' more notes</p>';
+                    }
+                    
+                    resultHtml += '<div style="margin-top: 20px;">';
+                    resultHtml += '<a href="/review/' + sessionId + '" style="background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px;">📋 Review All Results</a>';
+                    resultHtml += '</div>';
+                } else {
+                    resultHtml = '<p style="color: red;">❌ Analysis failed</p>';
+                }
+                
+                output.innerHTML = resultHtml;
+                results.style.display = 'block';
+                btn.textContent = '✅ Complete';
+
+            } catch (error) {
+                output.innerHTML = '<p style="color: red;">❌ Error: ' + error.message + '</p>';
+                results.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = '🔄 Retry';
+            }
+        }
+    </script>
+</body>
+</html>

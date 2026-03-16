@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sticky Note Workflow Processor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .upload-form {
+            border: 2px dashed #ccc;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px;
+        }
+        .flow-direction {
+            text-align: left;
+            margin: 20px 0;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        .flow-direction h3 {
+            margin-top: 0;
+        }
+        .radio-option {
+            margin: 10px 0;
+            padding: 10px;
+        }
+        .radio-option input[type="radio"] {
+            margin-right: 10px;
+        }
+        .radio-option label {
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .radio-option .description {
+            display: block;
+            margin-left: 25px;
+            font-size: 0.9em;
+            color: #666;
+            font-weight: normal;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 10px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .file-input {
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>📝 Sticky Note Workflow Processor</h1>
+    
+    <form action="/upload" method="POST" enctype="multipart/form-data" class="upload-form">
+        <div class="flow-direction">
+            <h3>🔀 Workflow Flow Direction</h3>
+            
+            <div class="radio-option">
+                <input type="radio" id="single-column" name="flow_direction" value="single-column" checked>
+                <label for="single-column">Single Column (Straight down)</label>
+                <span class="description">One vertical workflow with possible parallel steps</span>
+            </div>
+            
+            <div class="radio-option">
+                <input type="radio" id="newspaper" name="flow_direction" value="newspaper">
+                <label for="newspaper">Newspaper Columns (Sequential columns)</label>
+                <span class="description">Single workflow split across columns - read down column 1, then down column 2, etc.</span>
+            </div>
+            
+            <div class="radio-option">
+                <input type="radio" id="horizontal-swim-lanes" name="flow_direction" value="horizontal-swim-lanes">
+                <label for="horizontal-swim-lanes">Horizontal Swim Lanes</label>
+                <span class="description">Multiple horizontal workflows stacked vertically - each row is independent</span>
+            </div>
+            
+            <div class="radio-option">
+                <input type="radio" id="vertical-swim-lanes" name="flow_direction" value="vertical-swim-lanes">
+                <label for="vertical-swim-lanes">Vertical Swim Lanes (Multiple columns)</label>
+                <span class="description">Side-by-side vertical workflows in separate columns - each column is independent</span>
+            </div>
+        </div>
+        
+        <div class="file-input">
+            <h3>📁 Upload Images</h3>
+            <input type="file" name="files" multiple accept="image/*" required>
+            <p style="color: #666; font-size: 0.9em;">
+                Single photo or multiple photos (overview + details)
+            </p>
+        </div>
+        
+        <button type="submit">Process Workflow</button>
+    </form>
+    
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div style="margin-top: 20px; padding: 10px; background: #fff3cd; border-radius: 5px;">
+                {% for message in messages %}
+                    <p>{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+</body>
+</html>
