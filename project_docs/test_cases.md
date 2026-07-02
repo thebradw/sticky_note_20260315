@@ -469,3 +469,53 @@ Remaining photo-quality limits (not code bugs):
 - 2 pain points (IDs 23-24) land in the overflow lane with no anchor -- PainPt4 and PainPt5 from the expected hierarchy. Acceptable; anchor manually in Review UI.
 
 
+
+## Test Case 5 (T4.0): Multi-Photo Horizontal Wall — Geometric Registration
+**Status**: ready to run 2026-07-02 — API integration test, MANUAL RUN ONLY (consumes Anthropic quota; offline registration coverage lives in `test_registration.py`)
+**Images**: `leftright_wholewall.jpeg` (overview) + `child1_wallcloseup.jpeg`, `child2_wallcloseup.jpeg`, `child3_wallcloseup.jpeg` (details)
+**Layout**: `horizontal-swim-lanes`
+
+### Frame Context
+**Contains Multiple Workflows**: Yes (wide wall, horizontal rows)
+
+**Multi-Photo Context**:
+One wide-angle overview of the full wall plus three overlapping close-ups covering the left, middle, and right thirds. Overview text is largely unreadable at wall scale; the close-ups supply text. This is the fixture set T4.0 was validated on: child1/2/3 register at 24/58/82% of overview width (left → middle → right).
+
+**Boundary Definition**:
+- Overview supplies note positions (pixel bboxes in the 4000px Vision space)
+- Detail photos supply text, color, shape — text is payload, never a matching signal
+- Detail bboxes transform into overview space via SIFT/RANSAC homography (`registration.py`); matching is nearest-neighbor by center distance (`match_by_geometry`)
+
+### Expected Output
+
+**Registration (deterministic, no API)**:
+- All three child photos register with `status='ok'` (baseline: 480/57/45 inliers, ratios 77/26/23%)
+- Registration failures on any child photo indicate a code regression, not photo quality — see `test_registration.py`
+
+**Detection Criteria / Pass Assertions**:
+- [ ] No duplicate notes: no two merged notes with center distance < 0.5 x median note width
+- [ ] `workflow_sequence` ordering consistent with left-to-right wall order (child1's notes before child2's before child3's within each lane)
+- [ ] Text for `source='registered'` notes comes from the detail photos (higher-resolution observation), not the overview pass
+- [ ] T3.0 lane headers elected (rectangle-shaped, color-contrast or is_workflow_title signals) and excluded from `workflow_sequence`
+- [ ] Merged notes flow through the unified pipeline: `workflows` metadata present, notes carry `center_x`/`center_y` in overview space
+- [ ] Unmatched detail notes (overview pass misses on dense walls) inserted as `source='detail_registered'` with confidence 85 — these are expected, not errors
+
+**Confidence Expectations**:
+- Registered merges: `min(99, 60 + inlier_ratio * 40)` — approx. 91 (child1), 70 (child2), 69 (child3)
+- Legacy-fallback merges (should be none on this fixture set): capped at 60 with `low_confidence=True`
+- Overview-only notes: 50
+
+### How to Run
+```bash
+# Requires ANTHROPIC_API_KEY in .env — coordinate before running (quota)
+python - <<'PY'
+from image_analyzer import StickyNoteAnalyzer
+a = StickyNoteAnalyzer()
+result = a.process_multi_photo_session(
+    "test_images/leftright_wholewall.jpeg",
+    ["test_images/child1_wallcloseup.jpeg",
+     "test_images/child2_wallcloseup.jpeg",
+     "test_images/child3_wallcloseup.jpeg"],
+    flow_direction="horizontal-swim-lanes")
+PY
+```

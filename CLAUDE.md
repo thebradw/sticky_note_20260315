@@ -16,7 +16,8 @@ Converts 1–6 smartphone photos of sticky-note process maps into structured PDF
 | `project_docs/PAIN_POINT_SHAPES.md` | When working on shape detection or pain point logic |
 | `project_docs/NEWSPAPER_LAYOUT_REFERENCE.md` | When working on newspaper column layout strategy |
 | `project_docs/TROUBLESHOOTING.md` | When debugging PDF generation or Flask startup failures |
-| `project_docs/IMPL_BRIEF_T3.md` | When implementing T3.0 rectangle role classifier (ready-for-implementation brief) |
+| `project_docs/IMPL_BRIEF_T3.md` | Reference for T3.0 rectangle role classifier logic (implemented 2026-03) |
+| `project_docs/IMPL_BRIEF_T4_REGISTRATION.md` | When implementing T4.0 geometric registration for multi-photo stitching (ready-for-implementation brief) |
 | `project_docs/USER_STORIES.md` | Supplementary product context — read alongside PRD.md |
 | `project_docs/AGENTS.md` | Supplementary repo guidelines — overlaps with this file; check for conflicts |
 | `project_docs/archive/` | Historical fix summaries — read only for decision branch archaeology |
@@ -54,7 +55,8 @@ python mock_analyzer.py
 app.py                  — Flask routes + session management + PDF orchestration
 pdf_renderer.py         — ProcessMapFlowable (ReportLab PDF drawing, extracted from app.py)
 image_analyzer.py       — StickyNoteAnalyzer (Claude Vision calls, layout heuristics)
-matcher.py              — NoteMatcherSystem (multi-photo stitching, confidence scoring)
+matcher.py              — NoteMatcherSystem (geometric note assignment; legacy fuzzy matcher as fallback)
+registration.py         — SIFT/RANSAC homography: maps detail-photo coordinates into overview space (T4.0)
 mock_analyzer.py        — Offline stub for testing without Anthropic quota
 layout_strategies/      — Pluggable grouping/sorting per layout type (see local CLAUDE.md)
 templates/              — Jinja UI (index, analysis progress, review editor)
@@ -67,7 +69,7 @@ project_docs/archive/   — Historical fix summaries — not active documentatio
 ```
 
 ## Test File Status
-**Canonical (run these):** `test_delete_simple.py`, `test_pain_point_rendering.py`, `test_parallel_decision.py`, `test_all_layouts.py`
+**Canonical (run these):** `test_delete_simple.py`, `test_pain_point_rendering.py`, `test_parallel_decision.py`, `test_all_layouts.py`, `test_registration.py` (after T4.0)
 **Scratch / superseded (do not rely on):** `test.py`, `test_delete.py`, `test_delete_comprehensive.py`
 
 ## Coding Conventions
@@ -94,6 +96,18 @@ DECISION_NO_MIN_Y    = 50      # px — min distance down for No branch
 - After changing a heuristic: capture JSON diff via `diagnose_detection.py`, drop fixture under `test_images/`, document scenario in `project_docs/test_cases.md`
 - Tests should assert note counts, branch links, and `workflow_sequence` ordering — not just success logs
 - Offline testing without Anthropic quota: use `mock_analyzer.py`
+
+## Multi-Photo Architecture Rules (T4.0)
+
+Geometric registration is the primary matching path for multi-photo sessions. `registration.py` computes a SIFT/RANSAC homography per detail photo and transforms detail note bboxes into overview pixel coordinates; `matcher.match_by_geometry` then assigns notes by nearest-neighbor distance. Design rules that must hold:
+
+1. **One coordinate space per image.** All bboxes live in the resized image submitted to Vision (max 4000px). Registration loads images through the same resize helper. Never introduce a second coordinate bookkeeping system.
+2. **Text is payload, never a matching signal.** Detail photos supply text; the overview supplies position. Do not reintroduce text similarity into primary matching.
+3. **The fuzzy matcher (`match_detail_to_overview`) is fallback-only** — used when registration fails its acceptance gates. Do not tune `calculate_match_confidence` weights to fix wall-scale matching problems; fix registration instead.
+4. **Multi-photo routes through the single-photo pipeline.** After merging, notes carry real pixel bboxes and must flow through `classify_rectangle_roles` and the layout strategies exactly like single-photo notes. Never re-add a separate grid_position sorting path.
+5. **Unmatched detail notes with valid registration are new notes**, inserted at their transformed coordinates — the overview pass misses notes on dense walls; a registered detail photo is authoritative for placement.
+
+Registration constants (`REG_MIN_INLIERS`, `REG_MATCH_MAX_DIST_FACTOR`, etc.) live at the top of `registration.py`. Validated baseline on repo fixtures: child1/2/3 close-ups register to 24/58/82% of `leftright_wholewall.jpeg` width. If a code change moves those anchors by more than ±10%, the change is wrong.
 
 ## Debugging & Fix Philosophy
 

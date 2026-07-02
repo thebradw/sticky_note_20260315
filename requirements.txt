@@ -1,0 +1,11 @@
+anthropic
+flask
+numpy
+opencv-python-headless
+pillow
+python-dotenv
+reportlab
+requests
+
+# Test-only
+pytest

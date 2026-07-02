@@ -11,6 +11,8 @@ from difflib import SequenceMatcher
 from statistics import median
 from matcher import NoteMatcherSystem
 from layout_strategies import get_layout_strategy
+from registration import (register_detail_to_overview, transform_bbox,
+                          load_vision_image, REG_MATCH_MAX_DIST_FACTOR)
 
 
 def is_rectangle_shape(shape):
@@ -210,7 +212,8 @@ Notes to read: {id_list}
                 'sticky_notes': [
                     {
                         'id': int,
-                        'text': str (may be empty if not readable),
+                        'bbox': [x1, y1, x2, y2] (pixels, Vision coordinate space),
+                        'text': str (best-effort; "" if not readable),
                         'color': str,
                         'position': str,
                         'shape': str,
@@ -232,39 +235,53 @@ Notes to read: {id_list}
             photo_dimensions = img.size
 
         prompt = """
-Analyze this photo of a wall covered in sticky notes. Your job is to catalog EVERY SINGLE sticky note visible in the image - no matter how small, overlapping, or unclear.
+Analyze this photo of a wall covered in sticky notes. Your job is to catalog EVERY SINGLE sticky note visible in the image - no matter how small, overlapping, or unclear - with PRECISE pixel coordinates.
 
 CRITICAL INSTRUCTIONS:
 - There are likely 50-150 sticky notes in this image. Do NOT stop at 20 or 30. Count and list ALL of them.
-- Extract the EXACT text you can read on each note. Do NOT infer, guess, or assume what text might say based on context.
-- If you cannot read the text clearly on a note, set text to "UNREADABLE" but STILL include the note with its position, color, and shape.
 - Do NOT skip notes just because they are small, partially hidden, or at the edges of the image.
 - Scan the ENTIRE image systematically: left-to-right, top-to-bottom. Do not stop until you have covered every area.
+- Text is BEST-EFFORT ONLY. If you cannot read a note's text clearly, set text to "" (empty string). Do NOT infer, guess, or generate plausible-sounding text. Position, color, and shape matter more than text here.
 
 For each sticky note, extract:
-1. Color (green, yellow, blue, pink, orange, purple, white, etc.)
-2. Shape:
+1. **Bounding box coordinates** in pixels: [x_min, y_min, x_max, y_max]
+   - x_min, y_min = top-left corner; x_max, y_max = bottom-right corner
+   - Use the actual image dimensions as reference
+   - Be extremely accurate - these coordinates drive spatial calculations
+2. Color (green, yellow, blue, pink, orange, purple, white, etc.)
+3. Shape:
    * "rectangular" - wider than tall (landscape orientation, often used as headers/labels)
    * "square" - roughly equal width and height (standard sticky note)
    * "diamond" - rotated 45 degrees (decision point). Diamonds are physically standard square sticky notes that have been deliberately rotated 45 degrees so they sit on a corner point-up. If you see a square sticky note that is tilted/rotated so it rests on its corner rather than flat on its edge, classify it as "diamond" not "square". Look carefully for this rotation; it may be subtle but it is always intentional.
    * "circular" or "oval"
    * Other shapes (star, arrow, etc.)
    * Some sticky notes may be star-shaped, cloud-shaped, arrow-shaped, or other non-standard shapes. These are deliberately chosen to indicate pain points or callouts. Look carefully at the outline or silhouette of each note; if it has points, curves, or irregular edges rather than straight sides, report its actual shape (star, cloud, arrow, burst, etc.). Do not classify non-standard shapes as "square" just because they are roughly the same size as square notes. The physical outline of the note determines the shape.
-3. Position using a 5x5 grid for better precision:
+4. Position using a 5x5 grid for better precision:
    - Horizontal: far-left, left, center, right, far-right
    - Vertical: top, upper-middle, middle, lower-middle, bottom
    - Combine as: "top far-left", "upper-middle center", "bottom right", etc.
-4. Text content - the EXACT words you can see. Use "UNREADABLE" if unclear.
+5. Text content - the words you can clearly read, or "" if unreadable. Never guess.
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON with this structure (the example text values are fictional):
 {
     "summary": "Brief factual description of what you see on the wall (colors, layout, groupings)",
+    "image_width": 4000,
+    "image_height": 3000,
     "sticky_notes": [
         {
             "id": 1,
-            "text": "exact text or UNREADABLE",
+            "bbox": [120, 80, 340, 290],
+            "text": "Zyphon intake",
             "color": "green",
             "position": "top far-left",
+            "shape": "square"
+        },
+        {
+            "id": 2,
+            "bbox": [380, 90, 600, 300],
+            "text": "",
+            "color": "yellow",
+            "position": "top left",
             "shape": "square"
         }
     ],
@@ -349,6 +366,7 @@ FINAL CHECK: Before responding, count your sticky_notes array. If it is under 40
                 'sticky_notes': [
                     {
                         'id': int,
+                        'bbox': [x1, y1, x2, y2] (pixels, detail Vision space),
                         'text': str (full text),
                         'color': str,
                         'position': str (within detail frame),
@@ -374,17 +392,25 @@ Analyze this close-up detail photo of sticky notes. This is a zoomed-in shot sho
 
 Extract:
 1. For each sticky note visible:
-   - Full text content (read carefully and completely)
+   - Bounding box coordinates in pixels: [x_min, y_min, x_max, y_max]
+     (top-left corner, then bottom-right corner, using the actual image
+     dimensions as reference - be precise, these drive spatial matching)
+   - Full text content (read carefully and completely; copy the EXACT
+     words, preserving abbreviations and misspellings - write "[illegible]"
+     for words you cannot read rather than guessing)
    - Color
    - Shape
    - Position within this detail photo (top-left, top-center, etc.)
 
-Return JSON:
+Return ONLY valid JSON (the example text values are fictional):
 {
+    "image_width": 4000,
+    "image_height": 3000,
     "sticky_notes": [
         {
             "id": 1,
-            "text": "Complete text from sticky note",
+            "bbox": [150, 200, 900, 950],
+            "text": "Grimbolt intake review",
             "color": "yellow",
             "position": "top-left",
             "shape": "square"
@@ -394,9 +420,11 @@ Return JSON:
         """
 
         try:
+            # 4096 (was 2000): bbox arrays add ~20 tokens per note and a
+            # truncated JSON response silently drops notes from the merge.
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=2000,
+                max_tokens=4096,
                 thinking={"type": "disabled"},
                 messages=[
                     {
@@ -444,7 +472,17 @@ Return JSON:
 
     def process_multi_photo_session(self, overview_path, detail_paths, flow_direction='single-column'):
         """
-        Orchestrate multi-photo workflow: overview Ã¢â€ â€™ detail analyses Ã¢â€ â€™ matching Ã¢â€ â€™ merge.
+        Orchestrate multi-photo workflow: overview -> detail analyses ->
+        geometric registration (T4.0) -> matching -> merge -> unified
+        layout pipeline.
+
+        Geometric registration is the primary matching path: each detail
+        photo is registered against the overview via SIFT/RANSAC homography
+        (registration.py) and its note bboxes are transformed into overview
+        pixel space for nearest-neighbor matching. The legacy fuzzy matcher
+        runs only for detail photos that fail registration's acceptance
+        gates; if EVERY photo fails, the whole session falls back to the
+        pre-T4.0 behavior (_legacy_multi_photo_merge).
 
         Args:
             overview_path: Path to overview photo
@@ -486,19 +524,200 @@ Return JSON:
                 'flow_direction': flow_direction
             }
 
-        # Step 3: Analyze detail photos
+        # Step 3: Analyze detail photos (keep path/result pairs aligned so
+        # each result can be registered against its source photo)
         all_detail_notes = []
-        detail_results = []
+        detail_pairs = []
 
         for detail_path in detail_paths:
             detail_result = self.analyze_detail(detail_path)
             if detail_result and 'sticky_notes' in detail_result:
-                detail_results.append(detail_result)
+                detail_pairs.append((detail_path, detail_result))
                 all_detail_notes.extend(detail_result['sticky_notes'])
+
+        # Vision numbers each photo's notes from 1 - re-id globally so match
+        # bookkeeping is unambiguous across detail photos.
+        for i, note in enumerate(all_detail_notes):
+            note['id'] = i + 1
 
         print(f"Detail photos: {len(all_detail_notes)} notes extracted")
 
-        # Step 4: Match detail notes to overview positions
+        # Step 3.5 (T4.0): register each detail photo into overview space.
+        # Geometric registration is the PRIMARY matching path; the fuzzy
+        # matcher below is fallback-only for photos that fail registration.
+        overview_has_bboxes = any(
+            n.get('bbox') and len(n['bbox']) >= 4 for n in overview_notes)
+
+        registered_notes = []
+        fallback_notes = []
+        if not overview_has_bboxes:
+            if all_detail_notes:
+                print("  [T4.0] Overview notes lack pixel bboxes - "
+                      "legacy matcher for all detail notes")
+            fallback_notes = list(all_detail_notes)
+        else:
+            for detail_path, detail_result in detail_pairs:
+                reg = register_detail_to_overview(overview_path, detail_path)
+                if reg['status'] == 'ok':
+                    transformed = 0
+                    for note in detail_result['sticky_notes']:
+                        bbox = note.get('bbox')
+                        if bbox and len(bbox) >= 4:
+                            note['overview_bbox'] = transform_bbox(
+                                bbox, reg['homography'])
+                            note['registration_inlier_ratio'] = \
+                                reg['inlier_ratio']
+                            registered_notes.append(note)
+                            transformed += 1
+                        else:
+                            fallback_notes.append(note)
+                    print(f"  [T4.0] Registered "
+                          f"{os.path.basename(detail_path)}: "
+                          f"{reg['inliers']} inliers, "
+                          f"ratio {reg['inlier_ratio']:.0%}, "
+                          f"{transformed} notes transformed")
+                else:
+                    print(f"Registration failed for {detail_path}: "
+                          f"{reg['reason']} - legacy matcher fallback")
+                    fallback_notes.extend(detail_result['sticky_notes'])
+
+        if not registered_notes:
+            # Every detail photo failed registration (or bboxes are
+            # unavailable): the entire session falls back to the pre-T4.0
+            # behavior unchanged.
+            return self._legacy_multi_photo_merge(
+                overview_result, overview_notes, all_detail_notes,
+                flow_direction)
+
+        # Step 4a (T4.0): geometric matching for registered notes
+        self._annotate_note_geometry(overview_notes)
+        overview_widths = [n['width'] for n in overview_notes
+                           if n.get('width')]
+        median_width = median(overview_widths) if overview_widths else 100
+        max_dist = REG_MATCH_MAX_DIST_FACTOR * median_width
+
+        geo_result = self.matcher.match_by_geometry(
+            overview_notes, registered_notes, max_dist)
+        print(f"  [T4.0] Geometric matches: {len(geo_result['matches'])} "
+              f"of {len(registered_notes)} registered notes "
+              f"(max_dist {max_dist:.0f}px)")
+
+        merged_notes = [m['merged_note'] for m in geo_result['matches']]
+        all_matches = list(geo_result['matches'])
+        conflicts = []
+
+        # Unmatched detail notes with a valid registration are NEW notes,
+        # not errors: the overview pass misses notes on dense walls; a
+        # registered detail photo is authoritative for placement.
+        registered_by_id = {n['id']: n for n in registered_notes}
+        new_note_count = 0
+        for detail_id in geo_result['unmatched_detail']:
+            note = registered_by_id.get(detail_id)
+            if not note:
+                continue
+            new_note = dict(note)
+            new_note['bbox'] = list(note['overview_bbox'])
+            new_note['source'] = 'detail_registered'
+            new_note['confidence'] = 85
+            merged_notes.append(new_note)
+            new_note_count += 1
+        if new_note_count:
+            print(f"  [T4.0] {new_note_count} unmatched detail note(s) "
+                  f"inserted as new notes at registered coordinates")
+
+        # Step 4b: legacy fuzzy matcher for unregistered notes only,
+        # against overview notes the geometric pass left unmatched.
+        unmatched_overview_ids = geo_result['unmatched_overview']
+        unmatched_detail_notes = []
+        overview_by_id = {n['id']: n for n in overview_notes}
+        if fallback_notes:
+            remaining_overview = [
+                overview_by_id[nid] for nid in unmatched_overview_ids
+                if nid in overview_by_id]
+            fb_result = self.matcher.match_detail_to_overview(
+                remaining_overview, fallback_notes)
+            print(f"  [T4.0] Legacy fallback matches: "
+                  f"{len(fb_result['matches'])}")
+            for match in fb_result['matches']:
+                merged_note = match['merged_note']
+                # Fallback path is low-trust: cap confidence and flag for
+                # the Review UI.
+                merged_note['confidence'] = min(60, match['confidence'])
+                merged_note['low_confidence'] = True
+                source_note = overview_by_id.get(match['overview_note_id'])
+                if source_note and source_note.get('bbox'):
+                    merged_note['bbox'] = list(source_note['bbox'])
+                merged_notes.append(merged_note)
+            all_matches.extend(fb_result['matches'])
+            conflicts = fb_result['conflicts']
+            unmatched_overview_ids = fb_result['unmatched_overview']
+            unmatched_detail_notes = [
+                n for n in fallback_notes
+                if n['id'] in set(fb_result['unmatched_detail'])]
+
+        # Overview notes nothing matched: keep at low confidence.
+        for note_id in unmatched_overview_ids:
+            overview_note = overview_by_id.get(note_id)
+            if overview_note:
+                overview_note['confidence'] = 50
+                overview_note['source'] = 'overview_only'
+                merged_notes.append(overview_note)
+
+        print(f"Total merged notes: {len(merged_notes)}")
+
+        # Step 5 (T4.0): UNIFIED PIPELINE. Merged notes carry real pixel
+        # bboxes in one overview coordinate space, so they route through
+        # the exact same sequence as single-photo analysis: T3.0 rectangle
+        # roles -> layout strategy grouping/sorting -> parallel + decision
+        # detection. (Replaces the old grid_position sorting entirely.)
+        pipeline_notes = [n for n in merged_notes
+                          if n.get('bbox') and len(n['bbox']) >= 4]
+        dropped = len(merged_notes) - len(pipeline_notes)
+        if dropped:
+            print(f"  [T4.0] WARNING: {dropped} merged note(s) without a "
+                  f"bbox dropped from the layout pipeline")
+
+        for i, note in enumerate(pipeline_notes):
+            note['id'] = i + 1
+            note['parallel_with'] = None
+
+        # Pipeline dimensions: the overview's Vision coordinate space.
+        img_width = overview_result.get('image_width')
+        img_height = overview_result.get('image_height')
+        if not img_width or not img_height:
+            overview_img = load_vision_image(overview_path)
+            img_height, img_width = overview_img.shape[:2]
+
+        analysis_data = {
+            'summary': overview_result.get('summary',
+                                           'Multi-photo workflow'),
+            'sticky_notes': pipeline_notes,
+        }
+        self._apply_layout_pipeline(
+            analysis_data, pipeline_notes, img_width, img_height,
+            flow_direction)
+
+        # Step 6: legacy swim-lane hints (kept for review UI compatibility)
+        swim_lanes = self.matcher.detect_swim_lanes(
+            analysis_data['sticky_notes'])
+
+        analysis_data.update({
+            'matches': all_matches,
+            'conflicts': conflicts,
+            'unmatched_detail': unmatched_detail_notes,
+            'swim_lanes': swim_lanes,
+            'readability_sufficient': False
+        })
+        return analysis_data
+
+    def _legacy_multi_photo_merge(self, overview_result, overview_notes,
+                                  all_detail_notes, flow_direction):
+        """Pre-T4.0 multi-photo merge (fuzzy matching + grid sorting).
+
+        Used ONLY when every detail photo fails geometric registration or
+        the overview response carries no pixel bboxes. Behavior is the
+        original Steps 4-6 of process_multi_photo_session, unchanged.
+        """
         if all_detail_notes:
             match_result = self.matcher.match_detail_to_overview(overview_notes, all_detail_notes)
 
@@ -829,297 +1048,12 @@ PAIN POINTS — callout and speech-bubble shapes:
                         self._refine_text_with_crops(
                             image_path, notes, img_width, img_height)
 
-                        strategy = get_layout_strategy(flow_direction)
-                        self._annotate_note_geometry(notes)
-
-                        # Flag notes whose short text shares no vocabulary with
-                        # the rest of the pool — likely Vision hallucinations.
-                        # Runs after geometry annotation (pain_point shape check
-                        # inside _flag_low_confidence_text needs is_pain_point,
-                        # which the layout strategy sets during sort — so we
-                        # do a lightweight pre-flag here using shape directly).
-                        for _n in notes:
-                            shape = (_n.get('shape') or '').lower()
-                            if shape and shape not in {'square', 'rectangular',
-                                                       'rectangle', 'diamond'}:
-                                _n['is_pain_point'] = True
-                        self._flag_low_confidence_text(notes)
-
-                        # T3.0: Rectangle Role Classifier — runs before grouping
-                        process_title, lane_labels, cleaned_notes = \
-                            self.classify_rectangle_roles(
-                                notes, flow_direction, img_width, img_height)
-
-                        # Group using the cleaned note pool (Tier 1 + 2 removed)
-                        raw_lanes = strategy.group_workflows(
-                            cleaned_notes, img_width, img_height)
-
-                        # Post-grouping Tier 2 scan — supplements the provisional
-                        # detection inside classify_rectangle_roles().
-                        #
-                        # The provisional pass can miss a lane header when the
-                        # header sticky's center_x sits between column centres,
-                        # collapsing all notes into one provisional group and
-                        # preventing the second (and beyond) lane from being
-                        # evaluated.  Running the same color+shape check on the
-                        # ACTUAL lane assignments is always correct.
-                        if flow_direction in ('vertical-swim-lanes',
-                                              'horizontal-swim-lanes'):
-                            refined_lanes = []
-                            for lane_idx, lane in enumerate(raw_lanes):
-                                if len(lane) < 2 or lane_labels.get(lane_idx):
-                                    # Already labelled by provisional pass, or too
-                                    # small to evaluate — leave as-is.
-                                    refined_lanes.append(lane)
-                                    continue
-
-                                # Topmost note in flow direction
-                                if flow_direction == 'vertical-swim-lanes':
-                                    candidate = min(lane,
-                                                    key=lambda n: n.get('center_y', 0))
-                                else:
-                                    candidate = min(lane,
-                                                    key=lambda n: n.get('center_x', 0))
-
-                                if not is_rectangle_shape(candidate.get('shape', '')):
-                                    refined_lanes.append(lane)
-                                    continue
-
-                                # Pain points that Vision mis-classified as 'square'
-                                # can become the leftmost note in a lane.  Guard
-                                # against them here — a pre-flagged pain point is
-                                # never a lane header.
-                                if candidate.get('is_pain_point'):
-                                    refined_lanes.append(lane)
-                                    continue
-
-                                others = [n for n in lane
-                                          if n['id'] != candidate['id']]
-                                if not others:
-                                    refined_lanes.append(lane)
-                                    continue
-
-                                # Only count standard shapes for modal color
-                                # (pain points have arbitrary colors)
-                                _STANDARD = {'square', 'rectangular', 'diamond'}
-                                color_counts = {}
-                                for n in others:
-                                    shape = (n.get('shape') or '').lower()
-                                    if shape and shape not in _STANDARD:
-                                        continue
-                                    c = (n.get('color') or '').lower()
-                                    color_counts[c] = color_counts.get(c, 0) + 1
-                                if not color_counts:
-                                    refined_lanes.append(lane)
-                                    continue
-                                modal_color = max(color_counts,
-                                                  key=color_counts.get)
-                                cand_color = (candidate.get('color') or '').lower()
-
-                                if cand_color != modal_color:
-                                    label = candidate.get('text', '') or ''
-                                    lane_labels[lane_idx] = label
-                                    refined_lanes.append(others)
-                                    print(f"  [T3.0] Post-group Tier 2 header "
-                                          f"(lane {lane_idx}): '{label[:40]}'")
-                                else:
-                                    refined_lanes.append(lane)
-
-                            raw_lanes = refined_lanes
-
-                        # --- Isolated-header merging pass ---
-                        # When a lane header sticky is physically offset from
-                        # its column (e.g. placed to the right of its process
-                        # steps), group_workflows can land it alone in a 1-note
-                        # lane.  The first-pass scan skips such lanes (len < 2).
-                        # This second pass detects them by color contrast against
-                        # the process-step modal color and assigns their text as
-                        # the label for the nearest unlabelled multi-note lane.
-                        if flow_direction in ('vertical-swim-lanes',
-                                              'horizontal-swim-lanes'):
-                            axis_key = ('center_x'
-                                        if flow_direction == 'vertical-swim-lanes'
-                                        else 'center_y')
-                            size_dim  = (img_width
-                                         if flow_direction == 'vertical-swim-lanes'
-                                         else img_height)
-
-                            # "Header-only" lane: exactly one is_workflow_title
-                            # note plus any number of pain points, but no actual
-                            # process steps.  Occurs when a swim-lane header sits
-                            # in the gap between two Y-bands and a stray pain point
-                            # lands in the same inter-lane gap, giving len(lane)==2
-                            # and bypassing the original len==1 isolated check.
-                            def _header_only_lane(lane):
-                                proc = [n for n in lane
-                                        if not n.get('is_pain_point')
-                                        and not n.get('is_workflow_title')]
-                                title = [n for n in lane
-                                         if n.get('is_workflow_title')]
-                                return len(proc) == 0 and len(title) == 1
-
-                            multi_note = [(i, lane)
-                                          for i, lane in enumerate(raw_lanes)
-                                          if len(lane) >= 2
-                                          and not _header_only_lane(lane)]
-                            isolated   = [(i, lane)
-                                          for i, lane in enumerate(raw_lanes)
-                                          if len(lane) == 1
-                                          or _header_only_lane(lane)]
-
-                            if isolated and multi_note:
-                                # Track IDs absorbed in this post-group pass
-                                tier2_ids: set = set()
-                                # Modal process-step color across all multi-note lanes
-                                # (exclude non-standard shapes — pain points)
-                                _STANDARD = {'square', 'rectangular', 'diamond'}
-                                all_colors: dict = {}
-                                for _, lane in multi_note:
-                                    for n in lane:
-                                        shape = (n.get('shape') or '').lower()
-                                        if shape and shape not in _STANDARD:
-                                            continue
-                                        c = (n.get('color') or '').lower()
-                                        all_colors[c] = all_colors.get(c, 0) + 1
-                                global_modal = (max(all_colors, key=all_colors.get)
-                                                if all_colors else '')
-
-                                absorbed: set = set()
-                                for iso_idx, iso_lane in isolated:
-                                    # For header-only multi-note lanes prefer the
-                                    # explicitly-flagged title note; for true
-                                    # single-note lanes use the only note.
-                                    title_cands = [n for n in iso_lane
-                                                   if n.get('is_workflow_title')]
-                                    cand = (title_cands[0] if title_cands
-                                            else iso_lane[0])
-                                    cand_color = (cand.get('color') or '').lower()
-
-                                    # Skip if same color as process steps AND Vision
-                                    # did not explicitly flag it as a workflow title.
-                                    # On dark/colored walls Vision can misread the
-                                    # header color — the explicit flag overrides the
-                                    # color gate so those headers are not dropped.
-                                    if (cand_color == global_modal
-                                            and not cand.get('is_workflow_title')):
-                                        continue  # same color as steps → not a header
-
-                                    # Nearest unlabelled multi-note lane by centroid
-                                    cand_pos = cand.get(axis_key, 0)
-                                    best_idx, best_dist = None, float('inf')
-                                    for multi_idx, lane in multi_note:
-                                        if lane_labels.get(multi_idx):
-                                            continue  # already has a label
-                                        lane_pos = (sum(n.get(axis_key, 0)
-                                                        for n in lane) / len(lane))
-                                        d = abs(cand_pos - lane_pos)
-                                        if d < best_dist:
-                                            best_dist, best_idx = d, multi_idx
-
-                                    if (best_idx is not None
-                                            and best_dist < (size_dim or 1000) * 0.5):
-                                        label = cand.get('text', '') or ''
-                                        lane_labels[best_idx] = label
-                                        tier2_ids.add(cand['id'])
-                                        absorbed.add(iso_idx)
-                                        print(f"  [T3.0] Isolated Tier 2 header "
-                                              f"(lane {iso_idx}) -> lane {best_idx}: "
-                                              f"'{label[:40]}'")
-
-                                if absorbed:
-                                    kept = [(old_i, lane)
-                                            for old_i, lane in enumerate(raw_lanes)
-                                            if old_i not in absorbed]
-                                    raw_lanes = [lane for _, lane in kept]
-                                    old_to_new_lane = {old_i: new_i
-                                                       for new_i, (old_i, _)
-                                                       in enumerate(kept)}
-                                    lane_labels = {
-                                        old_to_new_lane[k]: v
-                                        for k, v in lane_labels.items()
-                                        if k in old_to_new_lane
-                                    }
-
-                        # Wrap each lane list with its lane_label metadata.
-                        workflows = [
-                            {'notes': lane, 'lane_label': lane_labels.get(i)}
-                            for i, lane in enumerate(raw_lanes)
-                        ]
-
-                        print(f"\nDetected {len(workflows)} workflow(s) using '{strategy.name}' layout")
-
-                        # Process each workflow independently
-                        all_processed_notes = []
-                        workflow_metadata = []
-
-                        for wf_idx, workflow in enumerate(workflows):
-                            workflow_notes = workflow['notes']
-                            lane_label     = workflow.get('lane_label')
-                            label_tag = f" [{lane_label}]" if lane_label else ""
-                            print(f"\n--- Processing Workflow {wf_idx + 1} ({len(workflow_notes)} notes){label_tag} ---")
-
-                            # Detect relationships within this workflow
-                            self._calculate_relationships_from_coordinates(workflow_notes, img_width, img_height, flow_direction)
-
-                            # Sort spatially within this workflow
-                            strategy.sort_workflow(workflow_notes, img_width, img_height)
-
-                            all_processed_notes.extend(workflow_notes)
-
-                            # Store workflow metadata (with lane_label for PDF)
-                            workflow_metadata.append({
-                                'workflow_id': wf_idx + 1,
-                                'note_count': len(workflow_notes),
-                                'note_ids': [n['id'] for n in workflow_notes],
-                                'lane_label': lane_label,
-                            })
-                        
-                        # Re-assign IDs globally after sorting
-                        # Create mapping of old IDs to new IDs
-                        old_to_new_id = {}
-                        for i, note in enumerate(all_processed_notes):
-                            old_id = note['id']
-                            new_id = i + 1
-                            old_to_new_id[old_id] = new_id
-                            note['id'] = new_id
-                        
-                        # Update workflow_metadata note_ids to use new IDs.
-                        # workflow_metadata is built before renumbering, so its
-                        # note_ids still reference old IDs.  Without this update
-                        # the PDF renderer's notes_dict lookup (keyed by new IDs)
-                        # misses every note and renders nothing for swim lanes.
-                        for wf in workflow_metadata:
-                            wf['note_ids'] = [
-                                old_to_new_id[nid]
-                                for nid in wf['note_ids']
-                                if nid in old_to_new_id
-                            ]
-
-                        # Update all references to use new IDs
-                        for note in all_processed_notes:
-                            # Update parallel_with references
-                            if note.get('parallel_with') in old_to_new_id:
-                                note['parallel_with'] = old_to_new_id[note['parallel_with']]
-                            
-                            # Update decision_branches references
-                            if note.get('decision_branches'):
-                                branches = note['decision_branches']
-                                if branches.get('yes_next_step') in old_to_new_id:
-                                    branches['yes_next_step'] = old_to_new_id[branches['yes_next_step']]
-                                if branches.get('no_next_step') in old_to_new_id:
-                                    branches['no_next_step'] = old_to_new_id[branches['no_next_step']]
-                                if branches.get('rejoin_step') in old_to_new_id:
-                                    branches['rejoin_step'] = old_to_new_id[branches['rejoin_step']]
-                            if note.get('is_pain_point') and note.get('pain_point_for') in old_to_new_id:
-                                note['pain_point_for'] = old_to_new_id[note['pain_point_for']]
-                        
-                        analysis_data['sticky_notes'] = all_processed_notes
-                        analysis_data['workflow_sequence'] = [note['id'] for note in all_processed_notes if not note.get('is_pain_point')]
-                        analysis_data['workflows'] = workflow_metadata
-                        analysis_data['flow_direction'] = flow_direction
-                        analysis_data['process_title'] = process_title
-                        
-                        print(f"\nFinal sequence: {analysis_data['workflow_sequence']}")
+                        # Shared layout pipeline (T3.0 roles, grouping,
+                        # sorting, parallel/decision detection) - also
+                        # used by the multi-photo merge path (T4.0).
+                        self._apply_layout_pipeline(
+                            analysis_data, notes, img_width, img_height,
+                            flow_direction)
                         
                     return analysis_data
                 else:
@@ -1132,6 +1066,315 @@ PAIN POINTS — callout and speech-bubble shapes:
         except Exception as e:
             print(f"Analysis failed: {e}")
             return None
+
+    def _apply_layout_pipeline(self, analysis_data, notes, img_width,
+                               img_height, flow_direction):
+        """Shared post-Vision layout pipeline (single- AND multi-photo).
+
+        Extracted verbatim from analyze_workflow so the multi-photo merge
+        path (T4.0) routes through the exact same sequence: geometry
+        annotation, pain-point pre-flagging, low-confidence text flagging,
+        T3.0 rectangle role classification, layout-strategy grouping and
+        sorting, parallel + decision detection, and global ID re-assignment.
+
+        Preconditions: every note carries a pixel 'bbox' in ONE coordinate
+        space, a unique 'id', and 'parallel_with' initialized to None.
+        Mutates analysis_data in place (sticky_notes, workflow_sequence,
+        workflows, flow_direction, process_title) and returns it.
+        """
+        strategy = get_layout_strategy(flow_direction)
+        self._annotate_note_geometry(notes)
+
+        # Flag notes whose short text shares no vocabulary with
+        # the rest of the pool — likely Vision hallucinations.
+        # Runs after geometry annotation (pain_point shape check
+        # inside _flag_low_confidence_text needs is_pain_point,
+        # which the layout strategy sets during sort — so we
+        # do a lightweight pre-flag here using shape directly).
+        for _n in notes:
+            shape = (_n.get('shape') or '').lower()
+            if shape and shape not in {'square', 'rectangular',
+                                       'rectangle', 'diamond'}:
+                _n['is_pain_point'] = True
+        self._flag_low_confidence_text(notes)
+
+        # T3.0: Rectangle Role Classifier — runs before grouping
+        process_title, lane_labels, cleaned_notes = \
+            self.classify_rectangle_roles(
+                notes, flow_direction, img_width, img_height)
+
+        # Group using the cleaned note pool (Tier 1 + 2 removed)
+        raw_lanes = strategy.group_workflows(
+            cleaned_notes, img_width, img_height)
+
+        # Post-grouping Tier 2 scan — supplements the provisional
+        # detection inside classify_rectangle_roles().
+        #
+        # The provisional pass can miss a lane header when the
+        # header sticky's center_x sits between column centres,
+        # collapsing all notes into one provisional group and
+        # preventing the second (and beyond) lane from being
+        # evaluated.  Running the same color+shape check on the
+        # ACTUAL lane assignments is always correct.
+        if flow_direction in ('vertical-swim-lanes',
+                              'horizontal-swim-lanes'):
+            refined_lanes = []
+            for lane_idx, lane in enumerate(raw_lanes):
+                if len(lane) < 2 or lane_labels.get(lane_idx):
+                    # Already labelled by provisional pass, or too
+                    # small to evaluate — leave as-is.
+                    refined_lanes.append(lane)
+                    continue
+
+                # Topmost note in flow direction
+                if flow_direction == 'vertical-swim-lanes':
+                    candidate = min(lane,
+                                    key=lambda n: n.get('center_y', 0))
+                else:
+                    candidate = min(lane,
+                                    key=lambda n: n.get('center_x', 0))
+
+                if not is_rectangle_shape(candidate.get('shape', '')):
+                    refined_lanes.append(lane)
+                    continue
+
+                # Pain points that Vision mis-classified as 'square'
+                # can become the leftmost note in a lane.  Guard
+                # against them here — a pre-flagged pain point is
+                # never a lane header.
+                if candidate.get('is_pain_point'):
+                    refined_lanes.append(lane)
+                    continue
+
+                others = [n for n in lane
+                          if n['id'] != candidate['id']]
+                if not others:
+                    refined_lanes.append(lane)
+                    continue
+
+                # Only count standard shapes for modal color
+                # (pain points have arbitrary colors)
+                _STANDARD = {'square', 'rectangular', 'diamond'}
+                color_counts = {}
+                for n in others:
+                    shape = (n.get('shape') or '').lower()
+                    if shape and shape not in _STANDARD:
+                        continue
+                    c = (n.get('color') or '').lower()
+                    color_counts[c] = color_counts.get(c, 0) + 1
+                if not color_counts:
+                    refined_lanes.append(lane)
+                    continue
+                modal_color = max(color_counts,
+                                  key=color_counts.get)
+                cand_color = (candidate.get('color') or '').lower()
+
+                if cand_color != modal_color:
+                    label = candidate.get('text', '') or ''
+                    lane_labels[lane_idx] = label
+                    refined_lanes.append(others)
+                    print(f"  [T3.0] Post-group Tier 2 header "
+                          f"(lane {lane_idx}): '{label[:40]}'")
+                else:
+                    refined_lanes.append(lane)
+
+            raw_lanes = refined_lanes
+
+        # --- Isolated-header merging pass ---
+        # When a lane header sticky is physically offset from
+        # its column (e.g. placed to the right of its process
+        # steps), group_workflows can land it alone in a 1-note
+        # lane.  The first-pass scan skips such lanes (len < 2).
+        # This second pass detects them by color contrast against
+        # the process-step modal color and assigns their text as
+        # the label for the nearest unlabelled multi-note lane.
+        if flow_direction in ('vertical-swim-lanes',
+                              'horizontal-swim-lanes'):
+            axis_key = ('center_x'
+                        if flow_direction == 'vertical-swim-lanes'
+                        else 'center_y')
+            size_dim  = (img_width
+                         if flow_direction == 'vertical-swim-lanes'
+                         else img_height)
+
+            # "Header-only" lane: exactly one is_workflow_title
+            # note plus any number of pain points, but no actual
+            # process steps.  Occurs when a swim-lane header sits
+            # in the gap between two Y-bands and a stray pain point
+            # lands in the same inter-lane gap, giving len(lane)==2
+            # and bypassing the original len==1 isolated check.
+            def _header_only_lane(lane):
+                proc = [n for n in lane
+                        if not n.get('is_pain_point')
+                        and not n.get('is_workflow_title')]
+                title = [n for n in lane
+                         if n.get('is_workflow_title')]
+                return len(proc) == 0 and len(title) == 1
+
+            multi_note = [(i, lane)
+                          for i, lane in enumerate(raw_lanes)
+                          if len(lane) >= 2
+                          and not _header_only_lane(lane)]
+            isolated   = [(i, lane)
+                          for i, lane in enumerate(raw_lanes)
+                          if len(lane) == 1
+                          or _header_only_lane(lane)]
+
+            if isolated and multi_note:
+                # Track IDs absorbed in this post-group pass
+                tier2_ids: set = set()
+                # Modal process-step color across all multi-note lanes
+                # (exclude non-standard shapes — pain points)
+                _STANDARD = {'square', 'rectangular', 'diamond'}
+                all_colors: dict = {}
+                for _, lane in multi_note:
+                    for n in lane:
+                        shape = (n.get('shape') or '').lower()
+                        if shape and shape not in _STANDARD:
+                            continue
+                        c = (n.get('color') or '').lower()
+                        all_colors[c] = all_colors.get(c, 0) + 1
+                global_modal = (max(all_colors, key=all_colors.get)
+                                if all_colors else '')
+
+                absorbed: set = set()
+                for iso_idx, iso_lane in isolated:
+                    # For header-only multi-note lanes prefer the
+                    # explicitly-flagged title note; for true
+                    # single-note lanes use the only note.
+                    title_cands = [n for n in iso_lane
+                                   if n.get('is_workflow_title')]
+                    cand = (title_cands[0] if title_cands
+                            else iso_lane[0])
+                    cand_color = (cand.get('color') or '').lower()
+
+                    # Skip if same color as process steps AND Vision
+                    # did not explicitly flag it as a workflow title.
+                    # On dark/colored walls Vision can misread the
+                    # header color — the explicit flag overrides the
+                    # color gate so those headers are not dropped.
+                    if (cand_color == global_modal
+                            and not cand.get('is_workflow_title')):
+                        continue  # same color as steps → not a header
+
+                    # Nearest unlabelled multi-note lane by centroid
+                    cand_pos = cand.get(axis_key, 0)
+                    best_idx, best_dist = None, float('inf')
+                    for multi_idx, lane in multi_note:
+                        if lane_labels.get(multi_idx):
+                            continue  # already has a label
+                        lane_pos = (sum(n.get(axis_key, 0)
+                                        for n in lane) / len(lane))
+                        d = abs(cand_pos - lane_pos)
+                        if d < best_dist:
+                            best_dist, best_idx = d, multi_idx
+
+                    if (best_idx is not None
+                            and best_dist < (size_dim or 1000) * 0.5):
+                        label = cand.get('text', '') or ''
+                        lane_labels[best_idx] = label
+                        tier2_ids.add(cand['id'])
+                        absorbed.add(iso_idx)
+                        print(f"  [T3.0] Isolated Tier 2 header "
+                              f"(lane {iso_idx}) -> lane {best_idx}: "
+                              f"'{label[:40]}'")
+
+                if absorbed:
+                    kept = [(old_i, lane)
+                            for old_i, lane in enumerate(raw_lanes)
+                            if old_i not in absorbed]
+                    raw_lanes = [lane for _, lane in kept]
+                    old_to_new_lane = {old_i: new_i
+                                       for new_i, (old_i, _)
+                                       in enumerate(kept)}
+                    lane_labels = {
+                        old_to_new_lane[k]: v
+                        for k, v in lane_labels.items()
+                        if k in old_to_new_lane
+                    }
+
+        # Wrap each lane list with its lane_label metadata.
+        workflows = [
+            {'notes': lane, 'lane_label': lane_labels.get(i)}
+            for i, lane in enumerate(raw_lanes)
+        ]
+
+        print(f"\nDetected {len(workflows)} workflow(s) using '{strategy.name}' layout")
+
+        # Process each workflow independently
+        all_processed_notes = []
+        workflow_metadata = []
+
+        for wf_idx, workflow in enumerate(workflows):
+            workflow_notes = workflow['notes']
+            lane_label     = workflow.get('lane_label')
+            label_tag = f" [{lane_label}]" if lane_label else ""
+            print(f"\n--- Processing Workflow {wf_idx + 1} ({len(workflow_notes)} notes){label_tag} ---")
+
+            # Detect relationships within this workflow
+            self._calculate_relationships_from_coordinates(workflow_notes, img_width, img_height, flow_direction)
+
+            # Sort spatially within this workflow
+            strategy.sort_workflow(workflow_notes, img_width, img_height)
+
+            all_processed_notes.extend(workflow_notes)
+
+            # Store workflow metadata (with lane_label for PDF)
+            workflow_metadata.append({
+                'workflow_id': wf_idx + 1,
+                'note_count': len(workflow_notes),
+                'note_ids': [n['id'] for n in workflow_notes],
+                'lane_label': lane_label,
+            })
+
+        # Re-assign IDs globally after sorting
+        # Create mapping of old IDs to new IDs
+        old_to_new_id = {}
+        for i, note in enumerate(all_processed_notes):
+            old_id = note['id']
+            new_id = i + 1
+            old_to_new_id[old_id] = new_id
+            note['id'] = new_id
+
+        # Update workflow_metadata note_ids to use new IDs.
+        # workflow_metadata is built before renumbering, so its
+        # note_ids still reference old IDs.  Without this update
+        # the PDF renderer's notes_dict lookup (keyed by new IDs)
+        # misses every note and renders nothing for swim lanes.
+        for wf in workflow_metadata:
+            wf['note_ids'] = [
+                old_to_new_id[nid]
+                for nid in wf['note_ids']
+                if nid in old_to_new_id
+            ]
+
+        # Update all references to use new IDs
+        for note in all_processed_notes:
+            # Update parallel_with references
+            if note.get('parallel_with') in old_to_new_id:
+                note['parallel_with'] = old_to_new_id[note['parallel_with']]
+
+            # Update decision_branches references
+            if note.get('decision_branches'):
+                branches = note['decision_branches']
+                if branches.get('yes_next_step') in old_to_new_id:
+                    branches['yes_next_step'] = old_to_new_id[branches['yes_next_step']]
+                if branches.get('no_next_step') in old_to_new_id:
+                    branches['no_next_step'] = old_to_new_id[branches['no_next_step']]
+                if branches.get('rejoin_step') in old_to_new_id:
+                    branches['rejoin_step'] = old_to_new_id[branches['rejoin_step']]
+            if note.get('is_pain_point') and note.get('pain_point_for') in old_to_new_id:
+                note['pain_point_for'] = old_to_new_id[note['pain_point_for']]
+
+        analysis_data['sticky_notes'] = all_processed_notes
+        analysis_data['workflow_sequence'] = [note['id'] for note in all_processed_notes if not note.get('is_pain_point')]
+        analysis_data['workflows'] = workflow_metadata
+        analysis_data['flow_direction'] = flow_direction
+        analysis_data['process_title'] = process_title
+
+        print(f"\nFinal sequence: {analysis_data['workflow_sequence']}")
+
+        return analysis_data
 
     def find_duplicate_notes(self, all_results):
         """Find potentially duplicate sticky notes across multiple images"""

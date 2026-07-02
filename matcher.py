@@ -342,6 +342,158 @@ class NoteMatcherSystem:
         }
         return merged
 
+    # ------------------------------------------------------------------ #
+    #  T4.0 — geometric matching (primary path for registered notes)     #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _bbox_center(bbox: List[float]) -> Tuple[float, float]:
+        return (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+
+    def _attribute_agreement(self, overview_note: Dict, detail_note: Dict) -> int:
+        """Tie-breaker score: +1 per agreeing attribute (color, shape).
+
+        Used ONLY to break near-ties in geometric matching — never as a
+        primary matching signal (text is payload, position is geometry).
+        """
+        score = 0
+        o_color = (overview_note.get('color') or '').lower().strip()
+        d_color = (detail_note.get('color') or '').lower().strip()
+        if o_color and d_color and (o_color == d_color
+                                    or self._colors_similar(o_color, d_color)):
+            score += 1
+        o_shape = (overview_note.get('shape') or '').lower().strip()
+        d_shape = (detail_note.get('shape') or '').lower().strip()
+        if o_shape and d_shape and (o_shape == d_shape
+                                    or self._shapes_similar(o_shape, d_shape)):
+            score += 1
+        return score
+
+    def _merge_notes_geometric(self, overview_note: Dict,
+                               detail_note: Dict) -> Dict:
+        """Merge a registered detail note onto its overview position.
+
+        Rule (T4.0): keep the overview id and overview-space bbox (the
+        overview supplies position); take text, color, and shape from the
+        detail note (the higher-resolution observation). Confidence scales
+        with registration quality: min(99, 60 + inlier_ratio * 40).
+        """
+        inlier_ratio = detail_note.get('registration_inlier_ratio', 0.0)
+        detail_text = (detail_note.get('text') or '').strip()
+        merged = {
+            'id': overview_note.get('id'),
+            'bbox': list(overview_note.get('bbox', [])),
+            'text': detail_text or overview_note.get('text', ''),
+            'color': detail_note.get('color', overview_note.get('color', '')),
+            'shape': detail_note.get('shape', overview_note.get('shape', '')),
+            'position': overview_note.get('position', ''),
+            'grid_position': overview_note.get('grid_position', {}),
+            'source': 'registered',
+            'confidence': min(99, 60 + inlier_ratio * 40),
+            'detail_note_id': detail_note.get('id')
+        }
+        return merged
+
+    def match_by_geometry(self, overview_notes: List[Dict],
+                          detail_notes_transformed: List[Dict],
+                          max_dist: float) -> Dict:
+        """
+        Match registered detail notes to overview notes by distance in
+        overview pixel space (T4.0 primary path).
+
+        detail_notes_transformed carry 'overview_bbox' (their bbox projected
+        into overview space via the registration homography). Assignment is
+        greedy one-to-one by ascending center-to-center distance; a pair is
+        accepted only when distance <= max_dist. Color/shape are used ONLY
+        as tie-breakers when two candidate overview notes are within 15%
+        distance of each other. Text is never a matching signal.
+
+        Returns the same schema as match_detail_to_overview:
+        matches / unmatched_overview / unmatched_detail / conflicts
+        (conflicts will normally be empty on this path).
+        """
+        overview_by_id = {}
+        overview_centers = {}
+        for note in overview_notes:
+            bbox = note.get('bbox')
+            if not bbox or len(bbox) < 4:
+                continue
+            overview_by_id[note['id']] = note
+            overview_centers[note['id']] = self._bbox_center(bbox)
+
+        # Candidate distances per detail note, nearest first
+        candidates = {}  # detail_id -> [(dist, overview_id), ...]
+        detail_by_id = {}
+        for detail_note in detail_notes_transformed:
+            bbox = detail_note.get('overview_bbox')
+            if not bbox or len(bbox) < 4:
+                continue
+            detail_by_id[detail_note['id']] = detail_note
+            dx, dy = self._bbox_center(bbox)
+            pairs = []
+            for overview_id, (ox, oy) in overview_centers.items():
+                dist = math.hypot(dx - ox, dy - oy)
+                if dist <= max_dist:
+                    pairs.append((dist, overview_id))
+            pairs.sort()
+            if pairs:
+                candidates[detail_note['id']] = pairs
+
+        matches = []
+        matched_overview = set()
+        matched_detail = set()
+
+        # Greedy: process detail notes in order of their nearest candidate
+        order = sorted(candidates.items(), key=lambda kv: kv[1][0][0])
+        for detail_id, pairs in order:
+            if detail_id in matched_detail:
+                continue
+            available = [(d, oid) for d, oid in pairs
+                         if oid not in matched_overview]
+            if not available:
+                continue
+
+            best_dist, best_overview_id = available[0]
+            detail_note = detail_by_id[detail_id]
+
+            # Tie-breaker: among candidates within 15% of the nearest
+            # distance, prefer the one agreeing on color/shape.
+            near_ties = [(d, oid) for d, oid in available
+                         if d <= best_dist * 1.15]
+            if len(near_ties) > 1:
+                best_dist, best_overview_id = max(
+                    near_ties,
+                    key=lambda pair: (
+                        self._attribute_agreement(overview_by_id[pair[1]],
+                                                  detail_note),
+                        -pair[0]
+                    )
+                )
+
+            overview_note = overview_by_id[best_overview_id]
+            merged = self._merge_notes_geometric(overview_note, detail_note)
+            matches.append({
+                'overview_note_id': best_overview_id,
+                'detail_note_id': detail_id,
+                'confidence': merged['confidence'],
+                'distance': round(best_dist, 1),
+                'merged_note': merged
+            })
+            matched_overview.add(best_overview_id)
+            matched_detail.add(detail_id)
+
+        unmatched_overview = [n['id'] for n in overview_notes
+                              if n['id'] not in matched_overview]
+        unmatched_detail = [n['id'] for n in detail_notes_transformed
+                            if n['id'] not in matched_detail]
+
+        return {
+            'matches': matches,
+            'unmatched_overview': unmatched_overview,
+            'unmatched_detail': unmatched_detail,
+            'conflicts': []
+        }
+
     def detect_swim_lanes(self, notes: List[Dict]) -> List[Dict]:
         """
         Detect swim lanes (horizontal workflow groupings) in the workflow.
