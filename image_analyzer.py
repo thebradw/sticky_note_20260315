@@ -28,7 +28,12 @@ class StickyNoteAnalyzer:
     def __init__(self):
         load_dotenv(override=True)   # override=True so .env wins over empty OS env vars
         self.client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-        self.model = "claude-4-sonnet-20250514"
+        # claude-sonnet-4-20250514 retired 2026-06-15; claude-sonnet-5 is the
+        # documented drop-in replacement. Sonnet 5 rejects non-default
+        # temperature and runs adaptive thinking unless disabled, so every
+        # call site passes thinking={"type": "disabled"} instead of
+        # temperature=0 (content[0] must stay a text block for parsing).
+        self.model = "claude-sonnet-5"
         self.matcher = NoteMatcherSystem()
     
     def encode_image(self, image_path):
@@ -156,7 +161,7 @@ Notes to read: {id_list}
                 resp = self.client.messages.create(
                     model=self.model,
                     max_tokens=4096,
-                    temperature=0,
+                    thinking={"type": "disabled"},
                     messages=[{
                         "role": "user",
                         "content": [
@@ -273,7 +278,7 @@ FINAL CHECK: Before responding, count your sticky_notes array. If it is under 40
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=16000,
-                temperature=0,   # deterministic — suppress text hallucination
+                thinking={"type": "disabled"},
                 messages=[
                     {
                         "role": "user",
@@ -392,7 +397,7 @@ Return JSON:
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
-                temperature=0,   # deterministic — suppress text hallucination
+                thinking={"type": "disabled"},
                 messages=[
                     {
                         "role": "user",
@@ -765,7 +770,7 @@ PAIN POINTS — callout and speech-bubble shapes:
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=max_tok,
-                temperature=0,   # deterministic — suppress text hallucination
+                thinking={"type": "disabled"},
                 messages=[
                     {
                         "role": "user",

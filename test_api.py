@@ -25,8 +25,10 @@ try:
     
     # Try the newest Claude 4 models first
     possible_models = [
-        "claude-4-sonnet-20250514",  # Latest Claude 4
-        "claude-sonnet-4-20250514",  # Alternative naming
+        "claude-sonnet-5",           # Current Sonnet (replaced retired claude-sonnet-4-20250514)
+        "claude-opus-4-8",           # Current Opus fallback
+        "claude-4-sonnet-20250514",  # RETIRED 2026-06-15 (kept for diagnostics)
+        "claude-sonnet-4-20250514",  # RETIRED 2026-06-15 (kept for diagnostics)
         "claude-3-5-sonnet-20241202",  # Recent Claude 3.5
         "claude-3-5-sonnet-latest",   # Generic latest
         "claude-3-sonnet-20240229"   # Fallback
