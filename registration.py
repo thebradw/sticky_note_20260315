@@ -28,12 +28,44 @@ REG_DETECT_MAX_DIM = 2400
 # Config constants — validated on repo fixtures 2026-07-02
 # (child1/2/3 close-ups register to 24/58/82% of leftright_wholewall.jpeg
 # width; a change that moves those anchors by more than ±10% is wrong).
+#
+# Gate calibration (2026-07-02, 10 runs per pair at the vision_resized_size
+# dimensions — OpenCV 5.0 RANSAC is deterministically seeded per call, so
+# all 10 runs per pair were bit-identical):
+#   child1: 435 inliers / ratio 0.7880    child2: 62 / 0.3563
+#   child3: 36 / 0.2034 (weakest genuine)
+#   unrelated impostor (newspaper vs wholewall): 39 / 0.1990
+# The impostor scores MORE inliers than the weakest genuine pair and its
+# ratio sits 0.0044 below it — the match statistics cannot separate the
+# classes with margin. Impostor rejection is therefore the job of the
+# PLAUSIBILITY GATE on the projected detail-region quad (below); the
+# inlier/ratio gates are sanity floors only, set with real headroom on the
+# genuine side.
 REG_MAX_FEATURES          = 8000
 REG_LOWE_RATIO            = 0.75
 REG_RANSAC_REPROJ         = 5.0
-REG_MIN_INLIERS           = 30     # child3 (weakest fixture) scored 53
-REG_MIN_INLIER_RATIO      = 0.20
+REG_MIN_INLIERS           = 30     # degenerate-input floor; child3 = 36 (17% headroom)
+REG_MIN_INLIER_RATIO      = 0.15   # floor only, NOT the impostor rejector;
+                                   # child3 = 0.2034 (36% headroom); the 0.199
+                                   # impostor deliberately passes this gate and
+                                   # is rejected by the plausibility gate
 REG_MATCH_MAX_DIST_FACTOR = 0.75   # x median overview note width
+
+# Plausibility gate on the projected detail-region quad — the load-bearing
+# impostor rejector. Fixture measurements (same deterministic runs):
+#   area fraction of overview:  child1 0.240 / child2 0.105 / child3 0.079
+#                               impostor 0.0000 (collapsed quad)
+#   edge-scale spread:          child1 1.09 / child2 1.10 / child3 1.15
+#                               impostor 1.80 (also non-convex)
+# A detail photo is a close-up of a wall sub-region, so its projection must
+# cover a non-trivial, sanely-scaled area. child3 sits ~4x above the area
+# floor; the spread bound is 1.6 rather than 1.5 because the genuine
+# fixtures trend upward with photo quality (1.09/1.10/1.15, n=3) and field
+# photos vary more in angle/distance — the impostor fails at 1.80 either
+# way, so the extra genuine-side headroom costs nothing.
+REG_MIN_AREA_FRACTION     = 0.02
+REG_MAX_AREA_FRACTION     = 1.5
+REG_MAX_EDGE_SCALE_SPREAD = 1.6
 
 
 def _load_vision_pil(image_path):
@@ -130,9 +162,15 @@ def register_detail_to_overview(overview_path, detail_path):
     compose into Vision space.
 
     Acceptance gates (all must pass, else status='failed'):
-      1. inliers >= REG_MIN_INLIERS            (evaluated at 2400px)
-      2. inlier_ratio >= REG_MIN_INLIER_RATIO  (evaluated at 2400px)
-      3. projected detail corners form a convex quadrilateral with positive area
+      1. inliers >= REG_MIN_INLIERS            (sanity floor, detection space)
+      2. inlier_ratio >= REG_MIN_INLIER_RATIO  (sanity floor, detection space)
+      3. plausibility gate on the projected detail-region quad — the
+         load-bearing impostor rejector (see constants block for the
+         empirical calibration):
+           3a. convex quadrilateral with positive area
+           3b. area fraction of overview in
+               [REG_MIN_AREA_FRACTION, REG_MAX_AREA_FRACTION]
+           3c. per-edge scale spread <= REG_MAX_EDGE_SCALE_SPREAD
       4. projected region center lies within overview image bounds
 
     Returns:
@@ -231,14 +269,46 @@ def register_detail_to_overview(overview_path, detail_path):
     detail_w, detail_h = detail_pil.size
     quad = _projected_corners(H, detail_w, detail_h)
 
-    # Gate 3: projected corners form a convex quad with positive area
+    # Gate 3 — PLAUSIBILITY GATE (the load-bearing impostor rejector; see
+    # the constants block for the fixture measurements that calibrate it).
+    # 3a: projected corners form a convex quad with positive area
     if not _is_convex_positive_quad(quad):
         result['reason'] = 'projected detail region is degenerate (non-convex)'
         return result
 
+    # 3b: projected area is a plausible fraction of the overview — a detail
+    # photo is a close-up of a wall sub-region, so its projection must cover
+    # a non-trivial, non-exploded area (genuine fixtures: 0.079-0.240;
+    # collapsed impostor quad: 0.0000)
+    overview_w, overview_h = overview_pil.size
+    area = cv2.contourArea(quad.reshape(-1, 1, 2).astype(np.float32))
+    area_fraction = area / (overview_w * overview_h)
+    if not (REG_MIN_AREA_FRACTION <= area_fraction <= REG_MAX_AREA_FRACTION):
+        result['reason'] = (
+            f'projected area fraction {area_fraction:.4f} outside '
+            f'[{REG_MIN_AREA_FRACTION}, {REG_MAX_AREA_FRACTION}]')
+        return result
+
+    # 3c: per-edge scale consistency — each projected edge implies a scale
+    # relative to the detail frame; a genuine homography keeps them tight
+    # (fixtures <= 1.15), a sheared false lock spreads them (impostor: 1.80)
+    edge_lengths = [float(np.linalg.norm(quad[i] - quad[(i + 1) % 4]))
+                    for i in range(4)]
+    frame_edges = [detail_w, detail_h, detail_w, detail_h]
+    edge_scales = [e / f for e, f in zip(edge_lengths, frame_edges)]
+    min_scale = min(edge_scales)
+    if min_scale <= 0:
+        result['reason'] = 'projected detail region has a zero-length edge'
+        return result
+    scale_spread = max(edge_scales) / min_scale
+    if scale_spread > REG_MAX_EDGE_SCALE_SPREAD:
+        result['reason'] = (
+            f'edge-scale spread {scale_spread:.2f} > '
+            f'REG_MAX_EDGE_SCALE_SPREAD {REG_MAX_EDGE_SCALE_SPREAD}')
+        return result
+
     # Gate 4: projected region center within overview bounds
     center_x, center_y = quad.mean(axis=0)
-    overview_w, overview_h = overview_pil.size
     if not (0 <= center_x <= overview_w and 0 <= center_y <= overview_h):
         result['reason'] = (
             f'projected center ({center_x:.0f}, {center_y:.0f}) outside '

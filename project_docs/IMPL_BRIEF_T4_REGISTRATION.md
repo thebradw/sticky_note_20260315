@@ -278,3 +278,17 @@ pixels equal model-seen pixels by construction. For 4032x3024 fixtures the TOKEN
 limit binds (Vision space 2212x1659) — the effective dimension is aspect-ratio
 dependent and must never be hardcoded.
 
+### Acceptance gates: statistical floors + geometric plausibility
+
+OpenCV 5.0's RANSAC is deterministically seeded, so gate calibration is against
+exact fixture values (10 runs bit-identical). Measured at the computed Vision
+dimensions, the match statistics cannot separate genuine from impostor pairs:
+the unrelated-pair fixture scores MORE inliers (39) than the weakest genuine
+pair (child3, 36) and its ratio sits 0.0044 below it. `REG_MIN_INLIERS` (30) and
+`REG_MIN_INLIER_RATIO` (0.15, was 0.20) are therefore sanity floors only; the
+load-bearing impostor rejector is a plausibility gate on the projected
+detail-region quad: convex + positive area, area fraction of overview in
+[0.02, 1.5], per-edge scale spread <= 1.6 (genuine fixtures: area 0.079-0.240,
+spread <= 1.15; impostor: collapsed non-convex quad, spread 1.80). Full
+empirical basis in the `registration.py` constants block.
+
