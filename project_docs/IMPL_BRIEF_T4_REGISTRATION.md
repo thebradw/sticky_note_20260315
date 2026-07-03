@@ -255,3 +255,26 @@ Refs: IMPL_BRIEF_T4_REGISTRATION.md; supersedes task_plan.md T2.2
 Reran: test_registration.py, test_parallel_decision.py, test_all_layouts.py,
 test_delete_simple.py, test_pain_point_rendering.py
 ```
+
+---
+
+## Approved Post-Implementation Refinements (2026-07-02)
+
+Documented in the same spirit as the Step 1 detection-resolution note: these are
+approved deviations from the original spec above, discovered during Test Case 5
+live validation.
+
+### Vision coordinate space is computed per-image, not "max 4000px"
+
+The coordinate-space rule's original wording ("the resized image submitted to
+Vision, max 4000px") was empirically false: Claude resizes images server-side
+(high-resolution tier: 2576px long edge AND 4784 visual tokens at
+`ceil(w/28) * ceil(h/28)`) and reports bboxes in THAT space. TC5 showed overview
+bboxes compressed to ~55% of the submitted 4000px frame. Fix:
+`vision_resized_size()` in `image_analyzer.py` (Anthropic's reference algorithm,
+verbatim) computes the exact per-image dimensions; `encode_image()` and
+`registration._load_vision_pil()` both resize to those dimensions, so submitted
+pixels equal model-seen pixels by construction. For 4032x3024 fixtures the TOKEN
+limit binds (Vision space 2212x1659) — the effective dimension is aspect-ratio
+dependent and must never be hardcoded.
+

@@ -5,24 +5,24 @@
 # into overview pixel coordinates, so detail note bboxes can be transformed
 # deterministically and matched by nearest-neighbor distance.
 #
-# Coordinate space rule (critical): all bboxes live in the resized image
-# submitted to Claude Vision (max 4000px, LANCZOS thumbnail — the same resize
-# encode_image() in image_analyzer.py applies). load_vision_image() below
-# replicates that exact resize so every image has exactly one coordinate
-# space. Never introduce a second coordinate bookkeeping system.
+# Coordinate space rule (critical): all bboxes live in the Vision coordinate
+# space — the exact per-image dimensions Claude's server-side pipeline
+# resizes to, computed by vision_resized_size() in image_analyzer.py (edge
+# limit AND visual-token limit; aspect-ratio dependent, NOT a fixed
+# constant). encode_image() submits images at exactly those dimensions and
+# load_vision_image() below loads through the same helper, so every image
+# has exactly one coordinate space. Never introduce a second coordinate
+# bookkeeping system.
 
 import cv2
 import numpy as np
 from PIL import Image
 
-# Must match the resize applied in StickyNoteAnalyzer.encode_image()
-VISION_MAX_DIM = 4000
-
 # Internal SIFT working resolution. Feature detection and the RANSAC
 # acceptance gates run at this resolution — the one the brief's constants
 # (REG_MIN_INLIERS, REG_MIN_INLIER_RATIO) were calibrated at. The resulting
-# homography is composed into VISION_MAX_DIM space before being returned,
-# so callers only ever see Vision-space coordinates.
+# homography is composed into each image's Vision space before being
+# returned, so callers only ever see Vision-space coordinates.
 REG_DETECT_MAX_DIM = 2400
 
 # Config constants — validated on repo fixtures 2026-07-02
@@ -39,14 +39,19 @@ REG_MATCH_MAX_DIST_FACTOR = 0.75   # x median overview note width
 def _load_vision_pil(image_path):
     """Load an image as grayscale PIL in the Vision coordinate space.
 
-    Applies the SAME resize as StickyNoteAnalyzer.encode_image(): images
-    larger than 4000px on their longest side are thumbnailed to fit within
-    4000x4000 with LANCZOS resampling.
+    Applies the SAME resize as StickyNoteAnalyzer.encode_image(): the exact
+    per-image dimensions Claude's server-side pipeline would resize to
+    (vision_resized_size — edge + visual-token limits).
     """
+    # Lazy import: image_analyzer imports this module at top level, so a
+    # top-level import here would be circular. By the time this function
+    # runs, image_analyzer is fully importable.
+    from image_analyzer import vision_resized_size
+
     with Image.open(image_path) as img:
-        if max(img.size) > VISION_MAX_DIM:
-            img.thumbnail((VISION_MAX_DIM, VISION_MAX_DIM),
-                          Image.Resampling.LANCZOS)
+        target = vision_resized_size(*img.size)
+        if target != img.size:
+            img = img.resize(target, Image.Resampling.LANCZOS)
         return img.convert('L')
 
 
@@ -54,7 +59,7 @@ def load_vision_image(image_path):
     """Load an image in grayscale in the Vision coordinate space.
 
     Returns a 2D uint8 numpy array in the same coordinate space as the
-    bboxes Claude Vision reports (max 4000px, LANCZOS).
+    bboxes Claude Vision reports (submitted pixels == model-seen pixels).
     """
     return np.asarray(_load_vision_pil(image_path))
 
@@ -64,8 +69,9 @@ def _detection_copy(vision_pil):
 
     Returns (gray_array, scale) where scale = detection_width / vision_width,
     i.e. the factor that maps Vision-space coordinates INTO detection space.
-    Computed per image from actual post-thumbnail sizes — thumbnail rounding
-    means this is not exactly REG_DETECT_MAX_DIM / VISION_MAX_DIM.
+    Computed per image from actual post-resize sizes (Vision space itself is
+    per-image, so there is no fixed ratio; images already at or below the
+    detection resolution pass through with scale 1.0).
     """
     det = vision_pil.copy()
     if max(det.size) > REG_DETECT_MAX_DIM:
@@ -100,20 +106,22 @@ def register_detail_to_overview(overview_path, detail_path):
 
     DETECTION RESOLUTION vs. BBOX COORDINATE SPACE — deliberately decoupled:
     SIFT detection, Lowe-ratio matching, RANSAC, and the inlier acceptance
-    gates all run at REG_DETECT_MAX_DIM (2400px), the resolution the brief's
-    gate constants were calibrated at (at 4000px the ratio-test match pool
-    is larger and inlier ratios drop below the calibrated gates even for
-    correct homographies — child2/3 fixtures fail at 4000px, pass at 2400px).
-    The RANSAC result H_2400 is then composed into Vision bbox space using
-    per-image scale factors measured from actual post-thumbnail dimensions:
+    gates all run at up to REG_DETECT_MAX_DIM (2400px), the resolution the
+    brief's gate constants were calibrated at (at higher working resolutions
+    the ratio-test match pool grows and inlier ratios drop below the
+    calibrated gates even for correct homographies). The RANSAC result
+    H_detect is then composed into each image's Vision bbox space using
+    per-image scale factors measured from actual post-resize dimensions:
 
-        H_4000 = inv(S_overview) @ H_2400 @ S_detail
+        H_vision = inv(S_overview) @ H_detect @ S_detail
         (S = diag(scale, scale, 1), scale = detection_dim / vision_dim)
 
     Only the composed Vision-space homography (and quantities derived from
     it) leave this function — nothing downstream ever sees or touches the
-    2400px space, so note bboxes still live in exactly one coordinate
-    system: the resized image submitted to Claude Vision (max 4000px).
+    detection space, so note bboxes still live in exactly one coordinate
+    system: the per-image dimensions Claude actually sees, computed by
+    vision_resized_size() (NOT a fixed constant — edge and visual-token
+    limits bind differently per aspect ratio).
 
     Pipeline: load both images grayscale through the Vision resize helper ->
     downscale working copies to REG_DETECT_MAX_DIM ->
@@ -201,7 +209,7 @@ def register_detail_to_overview(overview_path, detail_path):
     result['inlier_ratio'] = round(inlier_ratio, 4)
 
     # Compose detection-space homography into Vision bbox space:
-    # H_4000 = inv(S_overview) @ H_2400 @ S_detail
+    # H_vision = inv(S_overview) @ H_detect @ S_detail
     s_detail = np.diag([scale_detail, scale_detail, 1.0])
     s_overview_inv = np.diag([1.0 / scale_overview, 1.0 / scale_overview, 1.0])
     H = s_overview_inv @ H_detect @ s_detail

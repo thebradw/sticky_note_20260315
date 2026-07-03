@@ -1,6 +1,7 @@
 # image_analyzer.py
 import os
 import base64
+import math
 from dotenv import load_dotenv
 import anthropic
 from PIL import Image
@@ -13,6 +14,70 @@ from matcher import NoteMatcherSystem
 from layout_strategies import get_layout_strategy
 from registration import (register_detail_to_overview, transform_bbox,
                           load_vision_image, REG_MATCH_MAX_DIST_FACTOR)
+
+
+# ---------------------------------------------------------------------- #
+#  Vision coordinate space                                                #
+# ---------------------------------------------------------------------- #
+# Claude resizes every image server-side before the model sees it, and
+# reports bbox coordinates in THAT space, not in the submitted image's
+# space. To keep exactly one coordinate space (T4.0 rule 1), every image
+# is pre-resized to the exact dimensions Claude would resize it to, so
+# submitted pixels == model-seen pixels by construction.
+#
+# vision_resized_size() is Anthropic's reference implementation, verbatim
+# from https://platform.claude.com/docs/en/build-with-claude/vision-coordinates
+# ("Resize your image before uploading"). The limits are per-image and
+# aspect-ratio dependent: landscape photos usually hit the edge limit,
+# portrait photos usually hit the visual-token limit first — so this must
+# stay a computed size, never a fixed constant.
+#
+# claude-sonnet-5 is on the high-resolution vision tier:
+VISION_MAX_EDGE = 2576     # px, long-edge limit (standard tier: 1568)
+VISION_MAX_TOKENS = 4784   # visual tokens (standard tier: 1568)
+
+
+def count_image_tokens(width: int, height: int) -> int:
+    """Visual tokens consumed by an image: one token per 28x28 pixel patch."""
+    return math.ceil(width / 28) * math.ceil(height / 28)
+
+
+def vision_resized_size(width, height,
+                        max_edge=VISION_MAX_EDGE,
+                        max_tokens=VISION_MAX_TOKENS):
+    """The size Claude resizes an image to before padding.
+
+    Returns (width, height). Images that already fit within the limits are
+    returned unchanged. Padding (to the next multiple of 28 on bottom/right)
+    is applied server-side and does not shift the coordinate origin, so it
+    is deliberately NOT applied here.
+    """
+
+    def fits(w: int, h: int) -> bool:
+        return (
+            math.ceil(w / 28) * 28 <= max_edge
+            and math.ceil(h / 28) * 28 <= max_edge
+            and count_image_tokens(w, h) <= max_tokens
+        )
+
+    if fits(width, height):
+        return (width, height)
+    if height > width:
+        resized_h, resized_w = vision_resized_size(
+            height, width, max_edge, max_tokens)
+        return (resized_w, resized_h)
+
+    # Binary search along the long edge for the largest aspect-preserving
+    # size that fits.
+    aspect_ratio = width / height
+    lo, hi = 1, width  # lo always fits; hi never fits
+    while lo + 1 < hi:
+        mid = (lo + hi) // 2
+        if fits(mid, max(round(mid / aspect_ratio), 1)):
+            lo = mid
+        else:
+            hi = mid
+    return (lo, max(round(lo / aspect_ratio), 1))
 
 
 def is_rectangle_shape(shape):
@@ -39,14 +104,19 @@ class StickyNoteAnalyzer:
         self.matcher = NoteMatcherSystem()
     
     def encode_image(self, image_path):
-        """Convert image to base64 for Claude API"""
+        """Convert image to base64 for Claude API.
+
+        Resizes to the exact dimensions Claude's server-side pipeline would
+        resize to (vision_resized_size), so the coordinates Vision returns
+        map one-to-one onto the submitted image. registration.py loads
+        images through the same helper — one coordinate space everywhere.
+        """
         try:
-            # Open and potentially resize image if too large
             with Image.open(image_path) as img:
-                # If image is very large, resize it
-                if max(img.size) > 4000:
-                    img.thumbnail((4000, 4000), Image.Resampling.LANCZOS)
-                
+                target = vision_resized_size(*img.size)
+                if target != img.size:
+                    img = img.resize(target, Image.Resampling.LANCZOS)
+
                 # Convert to RGB if necessary
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
