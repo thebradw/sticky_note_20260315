@@ -471,7 +471,7 @@ Remaining photo-quality limits (not code bugs):
 
 
 ## Test Case 5 (T4.0): Multi-Photo Horizontal Wall — Geometric Registration
-**Status**: ready to run 2026-07-02 — API integration test, MANUAL RUN ONLY (consumes Anthropic quota; offline registration coverage lives in `test_registration.py`)
+**Status**: pass 2026-07-02 — merge pipeline validated end-to-end after coordinate-space, gate, dedup, and arrow-stripping fixes; residual items are wall-content ambiguities, not code bugs. API integration test, MANUAL RUN ONLY (offline coverage: `test_registration.py`)
 **Images**: `leftright_wholewall.jpeg` (overview) + `child1_wallcloseup.jpeg`, `child2_wallcloseup.jpeg`, `child3_wallcloseup.jpeg` (details)
 **Layout**: `horizontal-swim-lanes`
 
@@ -519,3 +519,16 @@ result = a.process_multi_photo_session(
     flow_direction="horizontal-swim-lanes")
 PY
 ```
+
+**Run findings (2026-07-02, final validation run)**:
+- Registration (deterministic): child1/2/3 = 435/62/36 inliers, ratios 79/36/20%, centers 24/58/82% of overview width. All three pass the redesigned gates (statistical floors + geometric plausibility); the unrelated-pair impostor is rejected by the plausibility gate (collapsed non-convex quad).
+- Detection: 120 overview notes + 81 detail notes (Vision counts vary a few notes run-to-run without temperature=0).
+- Merge: 61/81 detail notes geometrically matched (max_dist 49px); 13 overlap duplicates resolved by the dedup pass with audit logging; 7 unmatched detail notes inserted as new. Final pool 125 process steps + pain points after T3.0 removed 2 lane headers. Sources: 58 registered / 7 detail_registered / 59 overview_only / 0 legacy fallback.
+- Duplicate criterion (< 0.5 x median width): 5 flagged pairs, all legitimate adjacencies on inspection (pain-point-on-step, distinct same-text pain points, dense neighbors). Down from 18 pairs before the dedup pass.
+- Text-dissimilarity veto regression check: 'Verify check #' and 'Closes invoice in Obeer' — both destroyed by pure-geometric dedup in the first run — now coexist with their close neighbors ('Print Checks in Doc. Printing', 'Creates outgoing Payments in Obeer'). Veto pairs are asserted in test_registration.py [5].
+- T3.0: lane headers 'Finance' and 'no PO' elected (arrow annotation stripped from the latter); 105-step workflow_sequence; all 8 decision diamonds carry arrow-free text with decision_branches intact.
+
+**Known items to watch (wall/content, not code)**:
+- Workflow 4's lane label elected as 'Hit Approve' — reads like a process step promoted by color contrast; verify against the photo and correct in Review UI if wrong (legitimate UI use case: single mis-election, not a systematic pattern).
+- The overview double-detection (twin 'price discrepancy' diamonds in an earlier run) did not recur in this run, so the overview-straggler dedup screen was not exercised live; its logic is covered by the unit-tested shared helper.
+- Two adjacent 'manual task' pain points 28px apart both survived (each matched its own overview position) — plausibly two real stickies (cf. TC4's repeated 'manual' pain points); confirm against the photo.

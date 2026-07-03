@@ -80,6 +80,55 @@ def vision_resized_size(width, height,
     return (lo, max(round(lo / aspect_ratio), 1))
 
 
+# Text-dissimilarity veto for overlap dedup (multi-photo merge).
+#
+# Method: character-level difflib.SequenceMatcher ratio on normalized text
+# (lowercased, whitespace-collapsed). Chosen over token overlap because OCR
+# variance destroys token sets while leaving character structure intact —
+# two readings of the same sticky ('sits in an open queu in yooz' vs
+# 'SO is on open geru in Yooz') share only 3 tokens (Jaccard 0.30) but
+# score 0.78 on character ratio.
+#
+# Threshold 0.6, calibrated on the 2026-07-02 TC5 run:
+#   clearly-distinct notes that MUST be vetoed:  <= 0.561
+#     ('Verify check #' vs 'Print Checks in Doc. Printing' = 0.419,
+#      'Closes invoice in Obeer' vs 'Creates outgoing Payments in Obeer'
+#      = 0.561)
+#   genuine overlap duplicates that MUST dedup:  >= 0.667
+#     (weakest: 'price discrepancy' vs 'Price Discrepancy PO vs invoice
+#      no' = 0.667; OCR-variant pair above = 0.778)
+# The threshold sits below the genuine-duplicate floor because the error
+# directions are asymmetric: a wrong veto merely leaves a visible duplicate
+# note; a wrong dedup silently destroys a real note.
+#
+# This is a VETO on a destructive merge, not a matching signal — geometric
+# distance still decides candidacy (T4.0 rule 2 intact).
+DEDUP_TEXT_SIMILARITY_MIN = 0.6
+
+# Shape classes for dedup candidacy: a pain point sitting ON a step is two
+# distinct notes at near-identical coordinates and must never be merged.
+_STANDARD_NOTE_SHAPES = {'square', 'rectangular', 'rectangle', 'diamond'}
+
+
+def _is_standard_note(note):
+    shape = (note.get('shape') or '').lower()
+    return not shape or shape in _STANDARD_NOTE_SHAPES
+
+
+def texts_clearly_dissimilar(text_a, text_b):
+    """True when both texts are non-empty and clearly describe different
+    notes (similarity below DEDUP_TEXT_SIMILARITY_MIN).
+
+    Empty/missing text is never dissimilar — an edge-cut "" reading must
+    still dedup against the complete reading from the overlapping photo.
+    """
+    a = ' '.join((text_a or '').lower().split())
+    b = ' '.join((text_b or '').lower().split())
+    if not a or not b:
+        return False
+    return SequenceMatcher(None, a, b).ratio() < DEDUP_TEXT_SIMILARITY_MIN
+
+
 def is_rectangle_shape(shape):
     """Return True if the shape string indicates a rectangle-role note.
 
@@ -468,6 +517,11 @@ Extract:
    - Full text content (read carefully and completely; copy the EXACT
      words, preserving abbreviations and misspellings - write "[illegible]"
      for words you cannot read rather than guessing)
+   - EDGE-CUT RULE: if a note is visibly cut off at the edge of the frame
+     (part of the note lies outside the photo), set its text to "" (empty
+     string) instead of guessing at the missing words. Still include the
+     note with its bbox, color, and shape. Another overlapping photo will
+     supply the full text.
    - Color
    - Shape
    - Position within this detail photo (top-left, top-center, etc.)
@@ -539,6 +593,54 @@ Return ONLY valid JSON (the example text values are fictional):
         except Exception as e:
             print(f"Detail analysis failed: {e}")
             return None
+
+    @staticmethod
+    def _find_overlap_duplicate(merged_notes, cand_note, cand_bbox, max_dist):
+        """Find the merged note the candidate duplicates, if any.
+
+        Nearest note within max_dist (same threshold as match_by_geometry)
+        whose shape class matches (pain point vs standard — a pain point
+        sitting ON a step is two distinct notes) and whose text is not
+        clearly dissimilar (texts_clearly_dissimilar — the veto that stops
+        dense adjacent stickies from being merged away).
+
+        Returns (note, distance) or (None, None).
+        """
+        if not cand_bbox or len(cand_bbox) < 4:
+            return None, None
+        cand_cx = (cand_bbox[0] + cand_bbox[2]) / 2
+        cand_cy = (cand_bbox[1] + cand_bbox[3]) / 2
+        cand_std = _is_standard_note(cand_note)
+        cand_text = cand_note.get('text')
+
+        best, best_dist = None, max_dist
+        for m in merged_notes:
+            mb = m.get('bbox')
+            if not mb or len(mb) < 4:
+                continue
+            if _is_standard_note(m) != cand_std:
+                continue
+            if texts_clearly_dissimilar(cand_text, m.get('text')):
+                continue
+            d = ((cand_cx - (mb[0] + mb[2]) / 2) ** 2
+                 + (cand_cy - (mb[1] + mb[3]) / 2) ** 2) ** 0.5
+            if d <= best_dist:
+                best_dist = d
+                best = m
+        if best is None:
+            return None, None
+        return best, best_dist
+
+    @staticmethod
+    def _resolve_duplicate_text(existing, candidate):
+        """Keep whichever of the two duplicate observations has non-empty,
+        longer text on the surviving merged note. Returns a log string."""
+        cand_text = (candidate.get('text') or '').strip()
+        kept_text = (existing.get('text') or '').strip()
+        if cand_text and len(cand_text) > len(kept_text):
+            existing['text'] = cand_text
+            return 'took candidate text (more complete)'
+        return 'kept existing text'
 
     def process_multi_photo_session(self, overview_path, detail_paths, flow_direction='single-column'):
         """
@@ -679,21 +781,42 @@ Return ONLY valid JSON (the example text values are fictional):
         # Unmatched detail notes with a valid registration are NEW notes,
         # not errors: the overview pass misses notes on dense walls; a
         # registered detail photo is authoritative for placement.
+        #
+        # BUT overlapping child photos capture the same physical note twice:
+        # one observation wins the one-to-one geometric match, the second
+        # lands here. Before inserting, dedup against already-merged
+        # positions (_find_overlap_duplicate: same max_dist as
+        # match_by_geometry, shape-class guard, text-dissimilarity veto)
+        # and resolve by text completeness (keep non-empty, longer text).
         registered_by_id = {n['id']: n for n in registered_notes}
         new_note_count = 0
+        dedup_count = 0
         for detail_id in geo_result['unmatched_detail']:
             note = registered_by_id.get(detail_id)
             if not note:
                 continue
+
+            existing, dist = self._find_overlap_duplicate(
+                merged_notes, note, note['overview_bbox'], max_dist)
+            if existing is not None:
+                resolution = self._resolve_duplicate_text(existing, note)
+                dedup_count += 1
+                print(f"  [T4.0] Dedup: detail note {detail_id} "
+                      f"'{(note.get('text') or '').strip()[:32]}' overlaps "
+                      f"merged note {existing.get('id')} ({dist:.0f}px) - "
+                      f"{resolution}")
+                continue
+
             new_note = dict(note)
             new_note['bbox'] = list(note['overview_bbox'])
             new_note['source'] = 'detail_registered'
             new_note['confidence'] = 85
             merged_notes.append(new_note)
             new_note_count += 1
-        if new_note_count:
+        if new_note_count or dedup_count:
             print(f"  [T4.0] {new_note_count} unmatched detail note(s) "
-                  f"inserted as new notes at registered coordinates")
+                  f"inserted as new notes, {dedup_count} resolved as "
+                  f"overlap duplicates")
 
         # Step 4b: legacy fuzzy matcher for unregistered notes only,
         # against overview notes the geometric pass left unmatched.
@@ -725,13 +848,36 @@ Return ONLY valid JSON (the example text values are fictional):
                 n for n in fallback_notes
                 if n['id'] in set(fb_result['unmatched_detail'])]
 
-        # Overview notes nothing matched: keep at low confidence.
+        # Overview notes nothing matched: keep at low confidence — but
+        # screen stragglers through the same dedup first. Vision sometimes
+        # detects the same physical note twice in the overview pass; one
+        # copy wins the geometric match and its twin would otherwise land
+        # here as a duplicate 20px from the merged note.
+        overview_dedup_count = 0
         for note_id in unmatched_overview_ids:
             overview_note = overview_by_id.get(note_id)
-            if overview_note:
-                overview_note['confidence'] = 50
-                overview_note['source'] = 'overview_only'
-                merged_notes.append(overview_note)
+            if not overview_note:
+                continue
+
+            existing, dist = self._find_overlap_duplicate(
+                merged_notes, overview_note, overview_note.get('bbox'),
+                max_dist)
+            if existing is not None:
+                resolution = self._resolve_duplicate_text(
+                    existing, overview_note)
+                overview_dedup_count += 1
+                print(f"  [T4.0] Dedup: overview note {note_id} "
+                      f"'{(overview_note.get('text') or '').strip()[:32]}' "
+                      f"overlaps merged note {existing.get('id')} "
+                      f"({dist:.0f}px) - {resolution}")
+                continue
+
+            overview_note['confidence'] = 50
+            overview_note['source'] = 'overview_only'
+            merged_notes.append(overview_note)
+        if overview_dedup_count:
+            print(f"  [T4.0] {overview_dedup_count} overview straggler(s) "
+                  f"resolved as duplicates of merged notes")
 
         print(f"Total merged notes: {len(merged_notes)}")
 

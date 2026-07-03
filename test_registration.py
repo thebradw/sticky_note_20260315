@@ -158,6 +158,77 @@ def test_transform_bbox():
     return True
 
 
+def test_dedup_text_veto():
+    """Text-dissimilarity veto for the multi-photo overlap dedup.
+
+    Regression anchors: the 2026-07-02 TC5 run merged away two real notes
+    ('Verify check #' and 'Closes invoice in Obeer') because dedup was
+    purely geometric. The veto must reject those merges while still
+    allowing genuine overlap duplicates (including OCR-variant and
+    edge-cut empty-string readings) to dedup.
+    """
+    print("\n[5] Dedup text-dissimilarity veto")
+    from image_analyzer import texts_clearly_dissimilar, StickyNoteAnalyzer
+
+    must_veto = [
+        # The two false positives from the 2026-07-02 TC5 run:
+        ("Verify check #", "Print Checks in Doc. Printing"),
+        ("Closes invoice in Obeer", "Creates outgoing Payments in Obeer"),
+    ]
+    must_dedup = [
+        ("manual task", "manual task"),
+        ("month end", "Month end no"),
+        ("Over $ Limit? yes no", "Over $ Limit? no"),
+        ("price discrepancy", "Price Discrepancy PO vs invoice no"),
+        ("sits in an open queu in yooz", "SO is on open geru in Yooz"),
+        ("", "Pay by check"),      # edge-cut "" must still dedup
+        (None, "Pay by check"),
+    ]
+
+    ok = True
+    for a, b in must_veto:
+        if not texts_clearly_dissimilar(a, b):
+            print(f"  FAIL: should veto (dissimilar): {a!r} vs {b!r}")
+            ok = False
+    for a, b in must_dedup:
+        if texts_clearly_dissimilar(a, b):
+            print(f"  FAIL: should dedup (not dissimilar): {a!r} vs {b!r}")
+            ok = False
+
+    # End-to-end through _find_overlap_duplicate: a vetoed candidate must
+    # NOT match the adjacent merged note, so both notes survive.
+    merged = [{'id': 1, 'bbox': [100, 100, 160, 160],
+               'text': 'Verify check #', 'shape': 'square'}]
+    cand = {'text': 'Print Checks in Doc. Printing', 'shape': 'square'}
+    hit, _ = StickyNoteAnalyzer._find_overlap_duplicate(
+        merged, cand, [110, 110, 170, 170], max_dist=45)
+    if hit is not None:
+        print("  FAIL: vetoed candidate still matched merged note")
+        ok = False
+
+    # ...while a genuine duplicate at the same distance must match.
+    merged2 = [{'id': 1, 'bbox': [100, 100, 160, 160],
+                'text': 'Hit Approve', 'shape': 'square'}]
+    cand2 = {'text': 'Hit Approve', 'shape': 'square'}
+    hit2, _ = StickyNoteAnalyzer._find_overlap_duplicate(
+        merged2, cand2, [110, 110, 170, 170], max_dist=45)
+    if hit2 is None:
+        print("  FAIL: genuine duplicate did not match")
+        ok = False
+
+    # ...and a pain point ON a step must never merge (shape-class guard).
+    cand3 = {'text': 'Hit Approve', 'shape': 'speech-bubble'}
+    hit3, _ = StickyNoteAnalyzer._find_overlap_duplicate(
+        merged2, cand3, [110, 110, 170, 170], max_dist=45)
+    if hit3 is not None:
+        print("  FAIL: pain point merged into standard note")
+        ok = False
+
+    if ok:
+        print("  PASS")
+    return ok
+
+
 def main():
     print("=" * 60)
     print("T4.0 Registration Tests (offline, no API quota)")
@@ -174,6 +245,7 @@ def main():
         'fixture_ordering': test_fixture_ordering(),
         'failure_gate': test_failure_gate(),
         'transform_bbox': test_transform_bbox(),
+        'dedup_text_veto': test_dedup_text_veto(),
     }
 
     print("\n" + "=" * 60)

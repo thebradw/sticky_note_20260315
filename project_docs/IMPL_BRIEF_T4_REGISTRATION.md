@@ -292,3 +292,17 @@ detail-region quad: convex + positive area, area fraction of overview in
 spread <= 1.15; impostor: collapsed non-convex quad, spread 1.80). Full
 empirical basis in the `registration.py` constants block.
 
+### Overlap dedup with text-dissimilarity veto
+
+Overlapping child photos capture the same physical note twice; the one-to-one
+geometric matcher assigns one observation and the second would insert as a
+spurious "new" note (18 duplicate pairs in the first TC5 run). Before inserting
+an unmatched detail note — or keeping an unmatched overview straggler — the
+merge now checks for an already-merged note within the same `max_dist` as
+`match_by_geometry`, requiring the same shape class (pain point vs standard) and
+vetoing when both texts are non-empty and clearly dissimilar
+(`SequenceMatcher` ratio < 0.6 — calibrated so the two observed false-positive
+merges score <= 0.561 and genuine duplicates >= 0.667; regression-tested in
+`test_registration.py`). Duplicates resolve by text completeness (non-empty,
+longer text wins). The veto uses text only as a brake on a destructive merge,
+never as a matching signal — rule 2 stands.
