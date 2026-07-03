@@ -80,6 +80,23 @@ def vision_resized_size(width, height,
     return (lo, max(round(lo / aspect_ratio), 1))
 
 
+# Arrow annotations Vision transcribes from decision diamonds ('Over $
+# Limit? ->no  v yes'). The arrows are a useful signal that Vision read the
+# branch drawing, but they don't belong in the final note text. Branch
+# detection never parses them: _calculate_relationships_from_coordinates is
+# purely geometric and reads the structured arrows_to / rejoin_arrows
+# fields, so stripping the glyphs from text is presentation-only.
+_ARROW_RE = re.compile(r'(?:[←-⇿⟰-⟿⬀-⬑➔-➾]|[-=]+>|<[-=]+)')
+
+
+def strip_arrow_annotations(text):
+    """Remove arrow glyphs/sequences from note text and tidy whitespace."""
+    if not text:
+        return text
+    stripped = _ARROW_RE.sub(' ', text)
+    return re.sub(r'\s{2,}', ' ', stripped).strip()
+
+
 # Text-dissimilarity veto for overlap dedup (multi-photo merge).
 #
 # Method: character-level difflib.SequenceMatcher ratio on normalized text
@@ -1298,6 +1315,13 @@ PAIN POINTS — callout and speech-bubble shapes:
         Mutates analysis_data in place (sticky_notes, workflow_sequence,
         workflows, flow_direction, process_title) and returns it.
         """
+        # Decision diamonds only: strip transcribed arrow glyphs from text.
+        # Safe because branch detection is geometric + structured-field
+        # based (see strip_arrow_annotations).
+        for _n in notes:
+            if (_n.get('shape') or '').lower() == 'diamond':
+                _n['text'] = strip_arrow_annotations(_n.get('text'))
+
         strategy = get_layout_strategy(flow_direction)
         self._annotate_note_geometry(notes)
 
@@ -1508,6 +1532,14 @@ PAIN POINTS — callout and speech-bubble shapes:
                         for k, v in lane_labels.items()
                         if k in old_to_new_lane
                     }
+
+        # Lane labels come from rectangle-shaped header notes, which can
+        # carry routing-arrow annotations just like diamonds ('no PO ->').
+        # strip_arrow_annotations is a pure text transform — nothing about
+        # it is diamond-specific — so it applies to labels unchanged. This
+        # is the single point every label-election pass flows through.
+        lane_labels = {k: strip_arrow_annotations(v)
+                       for k, v in lane_labels.items()}
 
         # Wrap each lane list with its lane_label metadata.
         workflows = [
