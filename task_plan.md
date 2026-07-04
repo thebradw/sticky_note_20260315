@@ -1,5 +1,5 @@
 ﻿# Task Plan - Final Build for Sticky Note Workflow Processor
-_Last updated: 2026-02-16_
+_Last updated: 2026-07-03_
 
 > **STATUS: BACKLOG / NOT YET IMPLEMENTED**
 > This document describes planned future work, not the current state of the codebase.
@@ -52,10 +52,12 @@ Deliver a production-ready workflow digitization tool that ingests one or multip
 - **T2.1 Prompt/version management**
   - Externalize prompts to `project_docs/` or `prompts/` with version tags.
   - Add config for Anthropic model fallback order (see `test_api.py`).
-- **T2.2 Multi-photo matching tuning**
-  - Improve `NoteMatcherSystem.calculate_match_confidence` weighting using dataset from `uploads/`.
-  - Add heuristics for arrow-follow overrides when `arrows_to` exist (per REQUIREMENTS).
-  - Track unmatched detail notes and surface in Review UI.
+- **T2.2 Geometric registration for multi-photo stitching (SUPERSEDED matching-tuning task — see `IMPL_BRIEF_T4_REGISTRATION.md`)**
+  - New `registration.py`: SIFT + RANSAC homography maps each detail photo into overview pixel space; validated 2026-07-02 on wall fixtures (child1/2/3 register at 24/58/82% of overview width).
+  - `analyze_overview` returns pixel bboxes (same schema as `analyze_workflow`); text becomes best-effort payload, never a matching signal.
+  - `matcher.match_by_geometry` assigns notes nearest-neighbor in overview space; legacy `calculate_match_confidence` retained as fallback only — do not tune its weights.
+  - Multi-photo merged notes route through `classify_rectangle_roles` + layout strategies (removes the grid_position sorting bypass).
+  - Arrow-follow overrides and Review UI surfacing of unmatched notes: moved to backlog, separate tasks.
 - **T2.3 Auto layout detection (optional stretch)**
   - Add analyzer pass to auto-suggest layout type; still allow manual override.
   - Expose in UI as recommendation.
@@ -77,7 +79,7 @@ Deliver a production-ready workflow digitization tool that ingests one or multip
 ### 3. Layout Strategy & Heuristic Enhancements
 **Objective**: Guarantee accurate sequencing for all layout types and pain-point handling.
 
-- **T3.0 Rectangle Role Classifier (pre-processing pass)**
+- **T3.0 Rectangle Role Classifier (SHIPPED 2026-03 — see `IMPL_BRIEF_T3.md`; spec below kept as historical reference)**
   - Implement before workflow grouping in `image_analyzer.py`. Runs on the full note pool for every layout type.
   - **Tier 1 — Banner**: shape is `rectangle`/`rectangular`, size ≥ 1.5× median note size, Y within top 20% of image, center_x not clearly owned by one column group. Extract as `process_title` session metadata; remove from note pool before grouping.
   - **Tier 2 — Lane Header**: shape is `rectangle`, `rectangular`, or `square`, first note in the flow direction of its group after a provisional grouping pass (highest Y for vertical lanes; lowest X for horizontal lanes), size within normal range, color differs from the modal color of remaining notes in that group. Store as `lane_label` on the workflow group; remove from sequencing.

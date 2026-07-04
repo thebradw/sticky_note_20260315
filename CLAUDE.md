@@ -12,7 +12,7 @@ Converts 1–6 smartphone photos of sticky-note process maps into structured PDF
 | `project_docs/COMPONENT_MAP.md` | Quick maturity/ownership table per component |
 | `project_docs/test_cases.md` | Canonical regression scenarios — run these after any layout or PDF change |
 | `project_docs/PRD.md` | Product intent, KPIs, personas, and out-of-scope items |
-| `project_docs/task_plan.md` | **BACKLOG ONLY** — planned work, not current functionality |
+| `task_plan.md` (repo root) | **BACKLOG ONLY** — planned work, not current functionality |
 | `project_docs/PAIN_POINT_SHAPES.md` | When working on shape detection or pain point logic |
 | `project_docs/NEWSPAPER_LAYOUT_REFERENCE.md` | When working on newspaper column layout strategy |
 | `project_docs/TROUBLESHOOTING.md` | When debugging PDF generation or Flask startup failures |
