@@ -94,6 +94,7 @@ Deliver a production-ready workflow digitization tool that ingests one or multip
 
 - **T3.1 Parameterize thresholds**
   - Expose `lane_gap_threshold`, `PARALLEL_SPACING`, Y delta thresholds in config for tuning per test cases.
+  - **Motivating case (photo-verified 2026-07-04, TC5)**: horizontal-lane Y-gap grouping fragmented two notes near a lane boundary ("need Approved vendor" + "Drag PDF into yooz", both belonging to the Finance/AP lane) into a spurious 2-note stub lane. The borderline inter-lane gap needs a tunable threshold, not a hardcoded value — this is the concrete fix target for parameterizing `lane_gap_threshold`. See `project_docs/test_cases.md` TC5 (T4.0) confirmed limitations. Header-absence detection for the same run is tracked separately as T3.4.
 - **T3.2 Pain-point association**
   - Extend `NewspaperColumnsStrategy._attach_pain_points` to consider text proximity and arrow hints (see `PAIN_POINT_SHAPES.md`).
 - **T3.3 Decision branch reconvergence**
@@ -112,6 +113,10 @@ Deliver a production-ready workflow digitization tool that ingests one or multip
               rejoin=rejoin_id)
       return flows
   ```
+- **T3.4 Header-absence detection for Tier 2 lane labeling**
+  - T3.0 Tier 2 cannot conclude "this lane has no header" — given zero genuine header candidates it always promotes the nearest color-contrast outlier (confirmed false promotion of "Hit Approve" in TC5, `test_images/leftright_wholewall.jpeg`; see `project_docs/test_cases.md` TC5 (T4.0) confirmed limitations).
+  - Separate from T3.1 because the fix requires a new heuristic, not a threshold-value change: gate promotion behind a minimum color-contrast margin and/or a rectangle-shape/size check, and leave a lane unlabeled when no candidate clears the bar.
+  - Primary field-level mitigation is one detail photo per swim lane so each lane has a legible header region; the Review UI relabel is the fallback.
 
 ### 3b. Low-Confidence Step Flagging (SHIPPED 2026-07-03 — see implementation note; spec below kept as historical reference)
 **Objective**: Make analyzer uncertainty visible without requiring manual reconstruction — the analyzer always commits to a decision; the flag is a prompt for facilitator confirmation only.
