@@ -113,8 +113,10 @@ Deliver a production-ready workflow digitization tool that ingests one or multip
       return flows
   ```
 
-### 3b. Low-Confidence Step Flagging (UI Highlight)
+### 3b. Low-Confidence Step Flagging (SHIPPED 2026-07-03 — see implementation note; spec below kept as historical reference)
 **Objective**: Make analyzer uncertainty visible without requiring manual reconstruction — the analyzer always commits to a decision; the flag is a prompt for facilitator confirmation only.
+
+**Implementation note (2026-07-03)**: `templates/review.html` has a `.low-confidence` CSS class with conditional rendering off `note.low_confidence`, now a reddish tint (`#dc3545` border / `#fdf0f0` background, `#f8d7da`/`#842029`/`#dc3545` badge) with a generalized "Analyzer confidence below threshold — please verify" tooltip per T3b.3. The backend sets `low_confidence` from TWO orthogonal signals: `_flag_low_confidence_text` (text-hallucination heuristic) AND `_flag_low_confidence_score`, which flags any note whose `confidence` falls below the `LOW_CONFIDENCE_THRESHOLD = 70` module constant (T3b.2). Confidence is populated on every returned note (T3b.1): the multi-photo path scores via the matcher/registration path, and `_apply_layout_pipeline` backfills single-photo notes — which Vision returns without a confidence field — to a neutral-high default of 85 (above threshold, so it does not false-flag a clean transcription; the text heuristic still catches suspect ones). The numeric pass runs after merge/dedup, sets only the boolean flag (never the confidence value), and is now functional in both single- and multi-photo sessions.
 - **T3b.1 Ensure confidence field is reliably populated in single-photo mode**
   - Currently `confidence` is consistently populated in multi-photo matching (`calculate_match_confidence`). Audit `analyze_workflow` to confirm every returned note has a `confidence` value; backfill with a default (e.g., 85) where the Claude Vision response doesn't include one.
 - **T3b.2 Define and expose confidence threshold as config constant**

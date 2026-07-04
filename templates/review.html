@@ -204,9 +204,9 @@
 
         .low-confidence-badge {
             display: inline-block;
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffc107;
+            background: #f8d7da;
+            color: #842029;
+            border: 1px solid #dc3545;
             border-radius: 4px;
             font-size: 0.75em;
             font-weight: bold;
@@ -217,8 +217,8 @@
         }
 
         .note-card.low-confidence {
-            border-left-color: #ffc107;
-            background: #fffdf0;
+            border-left-color: #dc3545;
+            background: #fdf0f0;
         }
 
         .note-field:has(select[data-field="parallel_with"]) {
@@ -516,7 +516,7 @@
                             <div class="note-text">
                                 {{ note.text }}
                                 {% if note.low_confidence %}
-                                <span class="low-confidence-badge" title="Short text with no matching vocabulary elsewhere on the wall — may be a misread. Please verify or correct.">⚠️ Verify</span>
+                                <span class="low-confidence-badge" title="Analyzer confidence below threshold — please verify. May be a suspect transcription or a weak photo match.">⚠️ Verify</span>
                                 {% endif %}
                                 <button class="edit-btn" onclick="editNoteByCard(this)">✏️ Edit</button>
                             </div>

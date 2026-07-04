@@ -126,6 +126,19 @@ DEDUP_TEXT_SIMILARITY_MIN = 0.6
 # distinct notes at near-identical coordinates and must never be merged.
 _STANDARD_NOTE_SHAPES = {'square', 'rectangular', 'rectangle', 'diamond'}
 
+# Numeric confidence floor for the Review-UI low_confidence flag (T3b.2).
+# A note whose populated `confidence` score falls below this is flagged for
+# facilitator confirmation. This SUPPLEMENTS _flag_low_confidence_text (a
+# text-hallucination heuristic) rather than replacing it — the two catch
+# orthogonal failure modes (low match/registration provenance vs. suspect
+# transcription), and the text heuristic is the only uncertainty signal in
+# single-photo mode, where Vision notes carry no confidence score. In the
+# multi-photo pool the score provenance is: registered ~68-99
+# (60 + inlier_ratio*40), detail_registered 85, overview_only 50, legacy
+# fallback capped at 60. Start at 70; tune against real session data via
+# diagnose_detection.py.
+LOW_CONFIDENCE_THRESHOLD = 70
+
 
 def _is_standard_note(note):
     shape = (note.get('shape') or '').lower()
@@ -1306,9 +1319,10 @@ PAIN POINTS — callout and speech-bubble shapes:
 
         Extracted verbatim from analyze_workflow so the multi-photo merge
         path (T4.0) routes through the exact same sequence: geometry
-        annotation, pain-point pre-flagging, low-confidence text flagging,
-        T3.0 rectangle role classification, layout-strategy grouping and
-        sorting, parallel + decision detection, and global ID re-assignment.
+        annotation, pain-point pre-flagging, confidence backfill (T3b.1) +
+        low-confidence flagging (text heuristic + numeric floor), T3.0
+        rectangle role classification, layout-strategy grouping and sorting,
+        parallel + decision detection, and global ID re-assignment.
 
         Preconditions: every note carries a pixel 'bbox' in ONE coordinate
         space, a unique 'id', and 'parallel_with' initialized to None.
@@ -1336,7 +1350,27 @@ PAIN POINTS — callout and speech-bubble shapes:
             if shape and shape not in {'square', 'rectangular',
                                        'rectangle', 'diamond'}:
                 _n['is_pain_point'] = True
+
+        # T3b.1: guarantee every returned note carries a numeric confidence.
+        # Single-photo Vision (analyze_workflow) does not return a confidence
+        # field, so those notes are backfilled to the neutral-high default
+        # 85 (a note Vision transcribed without flagging is assumed
+        # reasonably confident — above LOW_CONFIDENCE_THRESHOLD, so the
+        # numeric pass below won't false-flag it; the text heuristic still
+        # catches suspect transcriptions). Multi-photo notes already carry a
+        # matcher/registration confidence and pass through unchanged.
+        for _n in notes:
+            if _n.get('confidence') is None:
+                _n['confidence'] = 85
+
         self._flag_low_confidence_text(notes)
+
+        # Supplement the text heuristic with a numeric confidence floor.
+        # Now functional in both paths (single-photo notes were backfilled
+        # to 85 above; multi-photo notes carry matcher/registration scores).
+        # Sets only the low_confidence flag — never the confidence value —
+        # so merge/dedup logic is unaffected.
+        self._flag_low_confidence_score(notes)
 
         # T3.0: Rectangle Role Classifier — runs before grouping
         process_title, lane_labels, cleaned_notes = \
@@ -2126,6 +2160,32 @@ PAIN POINTS — callout and speech-bubble shapes:
 
         if flagged:
             print(f"  [LowConf] {flagged} note(s) flagged as low-confidence text")
+
+    def _flag_low_confidence_score(self, notes):
+        """Flag notes whose populated confidence score is below the floor.
+
+        Supplements _flag_low_confidence_text: a note carries
+        low_confidence=True if EITHER its transcription looks suspect (text
+        heuristic) OR its match/registration provenance is weak (this pass).
+
+        Only acts on notes that already have a numeric `confidence` — i.e.
+        the multi-photo merged pool. Single-photo notes carry no confidence
+        score, so this is a no-op there and the text heuristic remains the
+        sole signal. Sets only the low_confidence flag; never mutates the
+        confidence value, so merge/dedup logic (which is already complete by
+        the time this runs) is unaffected.
+        """
+        flagged = 0
+        for note in notes:
+            confidence = note.get('confidence')
+            if confidence is None:
+                continue  # single-photo / unscored note — text heuristic only
+            if confidence < LOW_CONFIDENCE_THRESHOLD and not note.get('low_confidence'):
+                note['low_confidence'] = True
+                flagged += 1
+        if flagged:
+            print(f"  [LowConf] {flagged} note(s) flagged below confidence "
+                  f"threshold {LOW_CONFIDENCE_THRESHOLD}")
 
     def _calculate_relationships_from_coordinates(self, notes, img_width, img_height, flow_direction='single-column'):
         """
